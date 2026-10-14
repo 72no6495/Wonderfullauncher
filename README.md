@@ -10,6 +10,7 @@
 [![Latest release](https://img.shields.io/github/v/release/72no6495/Wonderfullauncher?label=download)](https://github.com/72no6495/Wonderfullauncher/releases/latest)
 ![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-ff71ce)
 ![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-01cdfe)
+[![License: MIT](https://img.shields.io/badge/License-MIT-b967ff)](LICENSE)
 
 </div>
 
@@ -181,6 +182,12 @@ app/src/main/java/com/wonderful/launcher/
     ├── components/          レトロ UI 部品・時計・四隅ボタン・ドック・ウィジェット
     └── theme/               カラーテーマ・フレームレート制御
 ```
+
+---
+
+## 📄 ライセンス
+
+[MIT License](LICENSE) で公開しています。自由に使用・改変・再配布できます（著作権表示とライセンス文を含めてください）。
 
 <div align="center">
 
