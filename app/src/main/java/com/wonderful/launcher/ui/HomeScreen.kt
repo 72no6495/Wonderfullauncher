@@ -26,7 +26,6 @@ import kotlinx.coroutines.delay
 import com.wonderful.launcher.ui.wallpaper.ChargeEvent
 import com.wonderful.launcher.ui.wallpaper.ChargeListener
 import com.wonderful.launcher.ui.wallpaper.ChargingOverlay
-import com.wonderful.launcher.ui.wallpaper.batteryLevel
 import com.wonderful.launcher.data.GestureSlot
 import com.wonderful.launcher.data.actionFor
 import com.wonderful.launcher.ui.components.SwipeDir
@@ -191,7 +190,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
         var chargeEvent by remember { mutableStateOf<ChargeEvent?>(null) }
         ChargeListener(s.chargeAnim) { e -> if (e.plugged || s.chargeOnUnplug) chargeEvent = e }
         LaunchedEffect(vm) {
-            vm.chargePreview.collect { chargeEvent = ChargeEvent(true, batteryLevel(context)) }
+            vm.chargePreview.collect { chargeEvent = com.wonderful.launcher.ui.wallpaper.chargeEvent(context, true) }
         }
 
         // ホーム画面でホームボタン

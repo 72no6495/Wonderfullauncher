@@ -942,7 +942,8 @@ private fun AppsTab(data: LauncherData, apps: List<AppInfo>, icons: Map<String, 
         Column(Modifier.padding(12.dp)) {
             RetroTextField(query, { query = it }, "アプリを絞り込み…", Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                RetroButton("おすすめ", { vm.resetSphereToRecommended() }, color = p.cyan)
                 RetroButton("全部入れる", { vm.addAllToSphere() }, color = p.mint)
                 RetroButton("全部外す", { vm.clearSphere() }, color = p.pink)
                 RetroLabel("${sphere.size}/${apps.size}", color = p.yellow, size = 12.sp)
