@@ -224,6 +224,14 @@ data class LifeConfig(
     val touch: Boolean = true,
 )
 
+/** 画面上部（時計の位置）に表示するもの */
+enum class TopSlot(val label: String) {
+    CLOCK("時計"),
+    WIDGET("ウィジェット"),
+    CLOCK_AND_WIDGET("時計＋ウィジェット"),
+    NONE("なし"),
+}
+
 /** 画面上の表示位置 */
 enum class ScreenCorner(val label: String) {
     TOP_LEFT("左上"),
@@ -286,6 +294,7 @@ enum class GestureAction(val label: String, val needsAccessibility: Boolean = fa
     SPIN_SPHERE("スピン"),
     LAUNCH_APP("アプリ起動"),
     ALARM("アラーム"),
+    SHOW_WIDGET("ウィジェット表示"),
     CAMERA("カメラ"),
     ASSISTANT("アシスタント"),
     FLASHLIGHT("ライト"),
@@ -448,7 +457,13 @@ data class LauncherSettings(
     val gradientAnimate: Boolean = true,
 
     // ── 時計 ──
-    val showClock: Boolean = true,
+    val showClock: Boolean = true, // v4 までの項目。v5 からは topSlot
+    /** 時計の位置に表示するもの */
+    val topSlot: TopSlot = TopSlot.CLOCK,
+    /** 時計の位置のウィジェットの高さ */
+    val topWidgetHeightDp: Float = 150f,
+    /** ジェスチャーで出すウィジェットの高さ（グリッドのマス数） */
+    val popupWidgetRows: Int = 5,
     val clock24h: Boolean = true,
     val showSeconds: Boolean = false,
     val showDate: Boolean = true,
@@ -596,6 +611,10 @@ data class LauncherData(
     val recent: List<RecentEntry> = emptyList(),
     val launchCounts: Map<String, Int> = emptyMap(),
     val widgets: List<WidgetItem> = emptyList(),
+    /** 時計の位置に表示するウィジェット */
+    val topWidget: WidgetItem? = null,
+    /** ジェスチャーで呼び出すウィジェット（GestureSlot 名 → ウィジェット） */
+    val gestureWidgets: Map<String, WidgetItem> = emptyMap(),
     /**
      * 保存形式のバージョン。v1（最初のリリース）にはこの項目が無いので、
      * 読み込み時に無ければ 1 として扱いマイグレーションする。

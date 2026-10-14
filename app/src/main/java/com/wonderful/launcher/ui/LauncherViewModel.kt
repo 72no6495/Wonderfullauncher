@@ -29,6 +29,9 @@ import com.wonderful.launcher.data.WidgetItem
 import com.wonderful.launcher.data.WidgetKind
 import com.wonderful.launcher.data.WidgetManager
 import com.wonderful.launcher.data.findFreeSpot
+import com.wonderful.launcher.data.WidgetTarget
+import com.wonderful.launcher.data.allWidgets
+import com.wonderful.launcher.data.mapAllWidgets
 import com.wonderful.launcher.system.BadgeListenerService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -104,7 +107,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         // 初回起動時はスフィアとドックに初期アプリを入れる
         // 保存データに無いウィジェット ID を解放
-        widgets.releaseOrphans(data.value.widgets.mapTo(HashSet()) { it.appWidgetId })
+        widgets.releaseOrphans(data.value.allWidgets().mapTo(HashSet()) { it.appWidgetId })
 
         apps.onEach { list ->
             if (list.isNotEmpty() && !data.value.sphereInitialized) initDefaults(list)
@@ -294,15 +297,46 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * ウィジェットを指定の場所に置く（ウィジェット画面・時計の位置・ジェスチャー・作り直し）。
+     * 時計の位置とジェスチャーは 1 つだけなので、前のものは片付ける。
+     */
+    fun placeWidget(target: WidgetTarget, kind: WidgetKind, w: Int, h: Int, appWidgetId: Int = -1, provider: String = "") {
+        val item = WidgetItem(UUID.randomUUID().toString(), kind, appWidgetId, provider, 0, 0, w.coerceIn(1, WIDGET_COLUMNS), h.coerceIn(1, 24))
+        when (target) {
+            WidgetTarget.Board -> addWidget(kind, w, h, appWidgetId, provider)
+            WidgetTarget.Top -> {
+                data.value.topWidget?.let { if (it.appWidgetId != appWidgetId) widgets.deleteId(it.appWidgetId) }
+                store.update { it.copy(topWidget = item) }
+            }
+            is WidgetTarget.Gesture -> {
+                data.value.gestureWidgets[target.slot]?.let { if (it.appWidgetId != appWidgetId) widgets.deleteId(it.appWidgetId) }
+                store.update { it.copy(gestureWidgets = it.gestureWidgets + (target.slot to item)) }
+            }
+            is WidgetTarget.Replace -> replaceWidgetId(target.itemId, appWidgetId, provider)
+        }
+    }
+
     /** 別端末から復元したウィジェットなどを作り直した時に ID を差し替える */
     fun replaceWidgetId(itemId: String, appWidgetId: Int, provider: String) {
-        val old = data.value.widgets.firstOrNull { it.id == itemId }?.appWidgetId
+        val old = data.value.allWidgets().firstOrNull { it.id == itemId }?.appWidgetId
         if (old != null && old != appWidgetId) widgets.deleteId(old)
         updateWidget(itemId) { it.copy(appWidgetId = appWidgetId, provider = provider) }
     }
 
+    /** どこに置いたウィジェットでも ID で更新できる */
     fun updateWidget(id: String, transform: (WidgetItem) -> WidgetItem) = store.update { d ->
-        d.copy(widgets = d.widgets.map { if (it.id == id) transform(it) else it })
+        d.mapAllWidgets { if (it.id == id) transform(it) else it }
+    }
+
+    fun removeTopWidget() {
+        data.value.topWidget?.let { widgets.deleteId(it.appWidgetId) }
+        store.update { it.copy(topWidget = null) }
+    }
+
+    fun removeGestureWidget(slot: String) {
+        data.value.gestureWidgets[slot]?.let { widgets.deleteId(it.appWidgetId) }
+        store.update { it.copy(gestureWidgets = it.gestureWidgets - slot) }
     }
 
     fun removeWidget(id: String) {
@@ -311,6 +345,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearWidgets() {
+        // ウィジェット画面のものだけ（時計の位置・ジェスチャー用は残す）
         data.value.widgets.forEach { widgets.deleteId(it.appWidgetId) }
         store.update { it.copy(widgets = emptyList()) }
     }
@@ -333,17 +368,17 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * それ以外は「再設定」が必要な状態にする。
      */
     fun importJson(text: String): Boolean {
-        val before = data.value.widgets.mapNotNull { it.appWidgetId.takeIf { id -> id >= 0 } }.toSet()
+        val before = data.value.allWidgets().mapNotNull { it.appWidgetId.takeIf { id -> id >= 0 } }.toSet()
         if (!store.importJson(text)) return false
         store.update { d ->
-            d.copy(widgets = d.widgets.map { w ->
-                if (w.kind != WidgetKind.SYSTEM || w.appWidgetId < 0) return@map w
+            d.mapAllWidgets { w ->
+                if (w.kind != WidgetKind.SYSTEM || w.appWidgetId < 0) return@mapAllWidgets w
                 val info = widgets.info(w.appWidgetId)
                 val valid = w.appWidgetId in before && info?.provider?.flattenToString() == w.provider
                 if (valid) w else w.copy(appWidgetId = -1)
-            })
+            }
         }
-        val keep = data.value.widgets.mapTo(HashSet()) { it.appWidgetId }
+        val keep = data.value.allWidgets().mapTo(HashSet()) { it.appWidgetId }
         before.filter { it !in keep }.forEach { widgets.deleteId(it) }
         return true
     }

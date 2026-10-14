@@ -160,6 +160,34 @@ class BackupCompatTest {
     }
 
     @Test
+    fun clockSwitchMigratesToTopSlot() {
+        // v4 までの「時計を表示」は、時計の位置に表示するものの選択へ
+        assertEquals(TopSlot.CLOCK, BackupCodec.decode(fixture("backup_v4.json")).settings.topSlot)
+        val off = BackupCodec.decode("""{"settings":{"showClock":false},"dataVersion":4}""")
+        assertEquals(TopSlot.NONE, off.settings.topSlot)
+        assertEquals(TopSlot.CLOCK, BackupCodec.decode("{}").settings.topSlot)
+    }
+
+    @Test
+    fun slotWidgetsRoundTripAndAreSanitized() {
+        val d = LauncherData(
+            topWidget = WidgetItem("t", WidgetKind.SYSMON, w = 8, h = 4),
+            gestureWidgets = mapOf(
+                "SWIPE_LEFT" to WidgetItem("g", WidgetKind.MEMORY, w = 99, h = 3),
+                "NO_SUCH_GESTURE" to WidgetItem("x", WidgetKind.CPU),
+            ),
+            settings = LauncherSettings(topSlot = TopSlot.CLOCK_AND_WIDGET),
+            dataVersion = Migration.CURRENT_VERSION,
+        )
+        val back = BackupCodec.decode(BackupCodec.encode(d))
+        assertEquals(TopSlot.CLOCK_AND_WIDGET, back.settings.topSlot)
+        assertEquals(WidgetKind.SYSMON, back.topWidget?.kind)
+        assertEquals(setOf("SWIPE_LEFT"), back.gestureWidgets.keys)
+        assertEquals(WIDGET_COLUMNS, back.gestureWidgets["SWIPE_LEFT"]?.w)
+        assertEquals(2, back.allWidgets().size)
+    }
+
+    @Test
     fun liteModeOnlyAffectsRendering() {
         val s = LauncherSettings(liteMode = true, dofBlur = 0.8f, trailLength = 0.5f, fpsLimit = 0)
         val e = s.effective()

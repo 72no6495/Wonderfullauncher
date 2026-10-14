@@ -20,6 +20,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wonderful.launcher.data.LauncherSettings
 import com.wonderful.launcher.data.OrientationMode
 import com.wonderful.launcher.data.WidgetKind
+import com.wonderful.launcher.data.WidgetTarget
 import com.wonderful.launcher.ui.HomeScreen
 import com.wonderful.launcher.ui.LauncherViewModel
 
@@ -36,7 +37,7 @@ class MainActivity : ComponentActivity() {
         val info: AppWidgetProviderInfo,
         val w: Int,
         val h: Int,
-        val replaceItemId: String?,
+        val target: WidgetTarget,
     )
     private var pendingWidget: PendingWidget? = null
 
@@ -82,9 +83,9 @@ class MainActivity : ComponentActivity() {
     // ── ウィジェット追加の流れ ──
     // 1. ID を確保 → 2. 未許可なら「ウィジェットの作成を許可」画面 → 3. 必要ならウィジェット自身の設定画面 → 4. 配置
 
-    private fun startAddWidget(info: AppWidgetProviderInfo, w: Int, h: Int, replaceItemId: String?) {
+    private fun startAddWidget(info: AppWidgetProviderInfo, w: Int, h: Int, target: WidgetTarget) {
         val id = vm.widgets.allocateId()
-        pendingWidget = PendingWidget(id, info, w, h, replaceItemId)
+        pendingWidget = PendingWidget(id, info, w, h, target)
         if (vm.widgets.bindIfAllowed(id, info)) {
             configureOrFinish()
         } else {
@@ -113,12 +114,7 @@ class MainActivity : ComponentActivity() {
     private fun finishWidget() {
         val p = pendingWidget ?: return
         pendingWidget = null
-        val provider = p.info.provider.flattenToString()
-        if (p.replaceItemId != null) {
-            vm.replaceWidgetId(p.replaceItemId, p.appWidgetId, provider)
-        } else {
-            vm.addWidget(WidgetKind.SYSTEM, p.w, p.h, p.appWidgetId, provider)
-        }
+        vm.placeWidget(p.target, WidgetKind.SYSTEM, p.w, p.h, p.appWidgetId, p.info.provider.flattenToString())
     }
 
     private fun cancelWidget(message: String?) {

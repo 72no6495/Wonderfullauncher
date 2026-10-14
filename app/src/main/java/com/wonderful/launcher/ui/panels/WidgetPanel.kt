@@ -80,6 +80,7 @@ import com.wonderful.launcher.data.LauncherData
 import com.wonderful.launcher.data.WIDGET_COLUMNS
 import com.wonderful.launcher.data.WidgetItem
 import com.wonderful.launcher.data.WidgetKind
+import com.wonderful.launcher.data.WidgetTarget
 import com.wonderful.launcher.ui.LauncherViewModel
 import com.wonderful.launcher.ui.components.EmptyMessage
 import com.wonderful.launcher.ui.components.Glyph
@@ -102,7 +103,7 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /** Android ウィジェットを追加する（バインド許可・設定画面は Activity 側で処理） */
-typealias AddSystemWidget = (info: AppWidgetProviderInfo, w: Int, h: Int, replaceItemId: String?) -> Unit
+typealias AddSystemWidget = (info: AppWidgetProviderInfo, w: Int, h: Int, target: WidgetTarget) -> Unit
 
 /**
  * ウィジェット画面。グリッドに沿って自由に配置でき、縦にスクロールできる。
@@ -144,7 +145,7 @@ fun WidgetPanel(
                             picking = false
                         },
                         onPickSystem = { info, w, h ->
-                            onAddSystem(info, w, h, null)
+                            onAddSystem(info, w, h, WidgetTarget.Board)
                             picking = false
                         },
                     )
@@ -249,19 +250,7 @@ private fun WidgetCell(
         ) {
             val wDp = with(density) { (item.w * cellPx).toDp().value.toInt() }
             val hDp = with(density) { (item.h * cellPx).toDp().value.toInt() }
-            when (item.kind) {
-                WidgetKind.SYSTEM -> SystemWidget(item, vm, wDp, hDp, onAddSystem)
-                WidgetKind.CLOCK -> ClockWidget(item)
-                WidgetKind.BATTERY -> BatteryWidget()
-                WidgetKind.NOTE -> NoteWidget(item, enabled = !editing) { text -> vm.updateWidget(item.id) { it.copy(text = text) } }
-                WidgetKind.MEMORY -> MemoryWidget(item)
-                WidgetKind.CPU -> CpuWidget(item)
-                WidgetKind.TEMPERATURE -> TemperatureWidget(item)
-                WidgetKind.STORAGE -> StorageWidget()
-                WidgetKind.NETWORK -> NetworkWidget(item)
-                WidgetKind.BOOST -> BoostWidget(vm)
-                WidgetKind.SYSMON -> SysMonWidget(item)
-            }
+            WidgetContent(item, vm, wDp, hDp, editing, onAddSystem)
         }
 
         if (editing) {
@@ -331,6 +320,24 @@ private fun WidgetCell(
     }
 }
 
+/** ウィジェット 1 つの中身（ウィジェット画面・時計の位置・ジェスチャー表示で共通） */
+@Composable
+fun WidgetContent(item: WidgetItem, vm: LauncherViewModel, wDp: Int, hDp: Int, editing: Boolean, onAddSystem: AddSystemWidget) {
+    when (item.kind) {
+        WidgetKind.SYSTEM -> SystemWidget(item, vm, wDp, hDp, onAddSystem)
+        WidgetKind.CLOCK -> ClockWidget(item)
+        WidgetKind.BATTERY -> BatteryWidget()
+        WidgetKind.NOTE -> NoteWidget(item, enabled = !editing) { text -> vm.updateWidget(item.id) { it.copy(text = text) } }
+        WidgetKind.MEMORY -> MemoryWidget(item)
+        WidgetKind.CPU -> CpuWidget(item)
+        WidgetKind.TEMPERATURE -> TemperatureWidget(item)
+        WidgetKind.STORAGE -> StorageWidget()
+        WidgetKind.NETWORK -> NetworkWidget(item)
+        WidgetKind.BOOST -> BoostWidget(vm)
+        WidgetKind.SYSMON -> SysMonWidget(item)
+    }
+}
+
 // ─────────────────────────────────────────────
 // Android ウィジェット
 // ─────────────────────────────────────────────
@@ -350,7 +357,7 @@ private fun SystemWidget(item: WidgetItem, vm: LauncherViewModel, wDp: Int, hDp:
             RetroLabel("NO SIGNAL", color = p.pink, size = 13.sp)
             if (provider != null) {
                 Spacer(Modifier.height(6.dp))
-                RetroButton("再設定", { onAddSystem(provider, item.w, item.h, item.id) }, color = p.yellow)
+                RetroButton("再設定", { onAddSystem(provider, item.w, item.h, WidgetTarget.Replace(item.id)) }, color = p.yellow)
             } else {
                 RetroLabel("アプリがありません", size = 10.sp, color = p.text.copy(alpha = 0.6f))
             }
@@ -510,7 +517,7 @@ private data class BuiltinSpec(val label: String, val glyph: Glyph, val kind: Wi
 private data class ProviderEntry(val info: AppWidgetProviderInfo, val label: String, val appLabel: String)
 
 @Composable
-private fun WidgetPicker(
+fun WidgetPicker(
     vm: LauncherViewModel,
     cellPx: Float,
     onPickBuiltin: (WidgetKind, Int, Int) -> Unit,
