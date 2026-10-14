@@ -15,7 +15,7 @@ import kotlinx.serialization.json.jsonObject
 object Migration {
 
     /** 現在の保存形式バージョン */
-    const val CURRENT_VERSION = 5
+    const val CURRENT_VERSION = 6
 
     fun migrate(input: LauncherData): LauncherData {
         var d = input
@@ -23,6 +23,7 @@ object Migration {
         if (d.dataVersion < 3) d = v2ToV3(d)
         if (d.dataVersion < 4) d = v3ToV4(d)
         if (d.dataVersion < 5) d = v4ToV5(d)
+        if (d.dataVersion < 6) d = v5ToV6(d)
         return sanitize(d.copy(dataVersion = maxOf(d.dataVersion, CURRENT_VERSION)))
     }
 
@@ -72,6 +73,16 @@ object Migration {
     private fun v4ToV5(d: LauncherData): LauncherData {
         val s = d.settings
         return d.copy(settings = s.copy(topSlot = if (s.showClock) TopSlot.CLOCK else TopSlot.NONE), dataVersion = 5)
+    }
+
+    /**
+     * v5 → v6
+     * - 「フレームレート制限なし」は高リフレッシュレートの端末で 120〜144fps になり発熱するため 60fps に
+     *   （設定画面からいつでも「制限なし」に戻せる）
+     */
+    private fun v5ToV6(d: LauncherData): LauncherData {
+        val s = d.settings
+        return d.copy(settings = if (s.fpsLimit == 0) s.copy(fpsLimit = 60) else s, dataVersion = 6)
     }
 
     /**

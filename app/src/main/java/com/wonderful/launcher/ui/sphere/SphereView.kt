@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -60,6 +61,11 @@ import com.wonderful.launcher.data.LauncherSettings
 import com.wonderful.launcher.ui.theme.FrameGate
 import com.wonderful.launcher.ui.theme.RetroPalette
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
+import androidx.compose.runtime.snapshotFlow
+import android.os.SystemClock
 import kotlin.math.max
 import kotlin.math.min
 
@@ -87,6 +93,8 @@ fun SphereView(
 ) {
     val engine = remember { SphereEngine() }
     val fx = remember { SphereFx() }
+    /** 眠っているフレームループを起こす合図 */
+    val wake = remember { Channel<Unit>(Channel.CONFLATED) }
     val frame = remember { mutableIntStateOf(0) }
     val view = LocalView.current
 
@@ -107,15 +115,16 @@ fun SphereView(
     LaunchedEffect(keys, settings.sphereLayout) {
         engine.setItems(keys, settings.sphereLayout, animate = settings.entranceAnim)
         frame.intValue++
+        wake.trySend(Unit)
     }
     LaunchedEffect(spinRequests) {
-        if (spinRequests > 0) engine.spin(5f)
+        if (spinRequests > 0) { engine.spin(5f); wake.trySend(Unit) }
     }
     LaunchedEffect(settings.tapParticles) {
         if (!settings.tapParticles) { fx.clearParticles(); frame.intValue++ }
     }
     LaunchedEffect(resetRequests) {
-        if (resetRequests > 0) engine.reset()
+        if (resetRequests > 0) { engine.reset(); wake.trySend(Unit) }
     }
     // ピンチで決めたサイズが設定に反映されたら上書きを解除
     LaunchedEffect(settings.sphereSize) {
@@ -124,17 +133,37 @@ fun SphereView(
     }
 
     // フレームループ
+    // ※ 何も動いていない時・一時停止中はフレームを要求しない（画面の更新を止めて発熱と電池を抑える）
     val gate = remember { FrameGate() }
+    LaunchedEffect(settings) { wake.trySend(Unit) }
     LaunchedEffect(engine) {
         var skipped = false
+        var quiet = 0
         var last = withFrameNanos { it }
         while (isActive) {
+            if (currentPaused) {
+                snapshotFlow { currentPaused }.first { !it }
+                last = withFrameNanos { it }
+                continue
+            }
+            if (quiet >= 3) {
+                // 次に自動回転が始まる時刻まで、または触られるまで眠る
+                val until = engine.secondsUntilAutoRotate(currentSettings)
+                val t0 = SystemClock.uptimeMillis()
+                if (until == null) wake.receive()
+                else if (until > 0f) withTimeoutOrNull((until * 1000).toLong() + 16) { wake.receive() }
+                engine.addIdle((SystemClock.uptimeMillis() - t0) / 1000f)
+                quiet = 0
+                last = withFrameNanos { it }
+                continue
+            }
             withFrameNanos { now ->
                 val dt = (now - last) / 1_000_000_000f
                 last = now
-                if (currentPaused) return@withFrameNanos
                 val moved = engine.step(dt, currentSettings, currentSettings.entranceAnim)
                 fx.advance(dt)
+                val active = moved || engine.touching || fx.needsFrames(currentSettings)
+                if (active) quiet = 0 else quiet++
                 // 物理は毎フレーム進めるが、描き直しはフレームレート制限に合わせて間引く
                 if (moved || fx.needsFrames(currentSettings)) {
                     if (gate.add(dt, currentSettings.fpsLimit)) {
@@ -161,6 +190,7 @@ fun SphereView(
     val labelPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER } }
     val initialPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD } }
     val labelCache = remember { HashMap<String, String>() }
+    val labelCacheSize = remember { floatArrayOf(-1f) }
     val badgePaint = remember {
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD; color = android.graphics.Color.WHITE
@@ -168,6 +198,7 @@ fun SphereView(
     }
     val point = remember { FloatArray(3) }
     val point2 = remember { FloatArray(3) }
+    val wirePaths = remember { List(2 * WIRE_LEVELS) { Path() } }
     val canvasPos = remember { FloatArray(2) }
 
     fun geometry(w: Float, h: Float): Triple<Float, Float, Float> {
@@ -375,7 +406,9 @@ fun SphereView(
                 LabelMode.ALL -> true
             }
             if (showLabel) {
-                val label = labelCache.getOrPut(app.key + "|" + labelPaint.textSize) { ellipsize(app.label, labelPaint, iconPx * 1.9f) }
+                // 文字の大きさが変わった時だけ作り直す（毎フレーム文字列を作らない）
+                if (labelCacheSize[0] != labelPaint.textSize) { labelCache.clear(); labelCacheSize[0] = labelPaint.textSize }
+                val label = labelCache.getOrPut(app.key) { ellipsize(app.label, labelPaint, iconPx * 1.9f) }
                 labelPaint.alpha = (a * 255).toInt()
                 drawIntoCanvas { c ->
                     c.nativeCanvas.drawText(label, x, y + half * sy + labelPaint.textSize * 1.15f, labelPaint)
@@ -387,11 +420,14 @@ fun SphereView(
     Box(
         modifier = modifier
             .fillMaxSize()
+            // 専用のレイヤーにして、球体を描き直しても周り（時計やボタン）を描き直さないようにする
+            .graphicsLayer()
             .onGloballyPositioned { val p = it.positionInRoot(); canvasPos[0] = p.x; canvasPos[1] = p.y }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     engine.touchDown()
+                    wake.trySend(Unit)
                     val tracker = VelocityTracker()
                     tracker.addPosition(down.uptimeMillis, down.position)
                     var dragging = false
@@ -463,6 +499,7 @@ fun SphereView(
                         }
                     }
                     engine.touchUp()
+                    wake.trySend(Unit)
 
                     when {
                         pinching -> {
@@ -543,19 +580,28 @@ fun SphereView(
             fx.prepare(engine, s, iconPx)
 
             // ワイヤーフレーム
+            // 線を 1 本ずつ描くと 500 回以上の描画になるので、色 × 奥行き 4 段階の 8 本のパスにまとめて描く
             if (s.wireframe && engine.count > 0) {
-                val wireStroke = 1.dp.toPx()
+                val wireStroke = Stroke(1.dp.toPx())
+                wirePaths.forEach { it.rewind() }
                 for ((wi, wire) in engine.wires.withIndex()) {
-                    val color = if (wi % 2 == 0) palette.cyan else palette.pink
+                    val colorIdx = wi % 2
                     val n = wire.size / 3
                     engine.projectPoint(wire[0], wire[1], wire[2], cx, cy, radius, s, point)
                     for (k in 1 until n) {
                         engine.projectPoint(wire[k * 3], wire[k * 3 + 1], wire[k * 3 + 2], cx, cy, radius, s, point2)
                         val d = (point[2] + point2[2]) * 0.5f
-                        val a = s.wireframeOpacity * (0.15f + 0.85f * d * d)
-                        drawLine(color.copy(alpha = a), Offset(point[0], point[1]), Offset(point2[0], point2[1]), wireStroke)
+                        val bucket = (d * WIRE_LEVELS).toInt().coerceIn(0, WIRE_LEVELS - 1)
+                        val path = wirePaths[colorIdx * WIRE_LEVELS + bucket]
+                        path.moveTo(point[0], point[1])
+                        path.lineTo(point2[0], point2[1])
                         point[0] = point2[0]; point[1] = point2[1]; point[2] = point2[2]
                     }
+                }
+                for (ci in 0 until 2) for (b in 0 until WIRE_LEVELS) {
+                    val d = (b + 0.5f) / WIRE_LEVELS
+                    val alpha = s.wireframeOpacity * (0.15f + 0.85f * d * d)
+                    drawPath(wirePaths[ci * WIRE_LEVELS + b], (if (ci == 0) palette.cyan else palette.pink).copy(alpha = alpha), style = wireStroke)
                 }
             }
             if (dof) drawIcons(back = true, iconPx)
@@ -604,3 +650,6 @@ private fun makeGlowBitmap(): ImageBitmap {
 
 /** この奥行きより奥のアイコンをぼかしレイヤーに描く */
 private const val DOF_SPLIT = 0.5f
+
+/** ワイヤーフレームの奥行きの段階数 */
+private const val WIRE_LEVELS = 4

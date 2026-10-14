@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.CompositionLocalProvider
+import com.wonderful.launcher.ui.theme.LocalAnimTime
+import com.wonderful.launcher.ui.theme.rememberTicker
 import androidx.compose.runtime.mutableLongStateOf
 import android.os.SystemClock
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -123,6 +126,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
     var lastTouch by remember { mutableLongStateOf(SystemClock.uptimeMillis()) }
     var idle by remember { mutableStateOf(false) }
     LaunchedEffect(s.idleSleepSec) {
+        if (s.idleSleepSec <= 0f) { idle = false; return@LaunchedEffect } // OFF なら見張らない
         while (true) {
             idle = s.idleSleepSec > 0f && SystemClock.uptimeMillis() - lastTouch > (s.idleSleepSec * 1000).toLong()
             delay(1000)
@@ -130,6 +134,9 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
     }
 
     RetroTheme(s) {
+        // 飾りのアニメーション（ボタンの浮遊・時計の明滅など）は 1 本の時計を共有。最大 30fps・放置中は停止
+        val animTime = rememberTicker(1f, paused = idle, maxFps = if (s.fpsLimit == 0) 30 else min(s.fpsLimit, 30))
+        CompositionLocalProvider(LocalAnimTime provides animTime) {
         val p = LocalPalette.current
         var resetRequests by remember { mutableIntStateOf(0) }
         var spinRequests by remember { mutableIntStateOf(0) }
@@ -289,7 +296,8 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                         settings = s,
                         palette = p,
                         // 設定画面は半透明なので、後ろの球体で変更をその場で確認できるよう止めない
-                        paused = (panel != Panel.NONE && panel != Panel.SETTINGS) || idle,
+                        // パネル表示中は止める（背景をぼかしている時に球体が動くと、毎フレームぼかし直しになり重い）
+                        paused = (panel != Panel.NONE && (panel != Panel.SETTINGS || s.panelBlur)) || idle,
                         spinRequests = spinRequests,
                         resetRequests = resetRequests,
                         badges = badges,
@@ -485,6 +493,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             ScreenEffects(s, p, paused = idle)
             ChargingOverlay(chargeEvent, s, p) { chargeEvent = null }
             CrtOverlay(s)
+        }
         }
     }
 }

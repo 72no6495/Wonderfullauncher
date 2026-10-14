@@ -154,7 +154,8 @@ class BackupCompatTest {
         // その後に増えた項目は初期値（人口グラフは時計と重ならない左下へ）
         assertEquals(ScreenCorner.BOTTOM_LEFT, s.life.hudCorner)
         assertFalse(s.liteMode)
-        assertEquals(0, s.fpsLimit)
+        // 「制限なし」だったフレームレートは発熱対策で 60fps に（v6）
+        assertEquals(60, s.fpsLimit)
         assertTrue(s.chargeAnim)
         assertEquals(LauncherSettings().cornerFloatAmount, s.cornerFloatAmount, 0.0001f)
     }
@@ -185,6 +186,17 @@ class BackupCompatTest {
         assertEquals(setOf("SWIPE_LEFT"), back.gestureWidgets.keys)
         assertEquals(WIDGET_COLUMNS, back.gestureWidgets["SWIPE_LEFT"]?.w)
         assertEquals(2, back.allWidgets().size)
+    }
+
+    @Test
+    fun unlimitedFpsMigratesTo60ButExplicitChoiceIsKept() {
+        val unlimited = BackupCodec.decode("""{"settings":{"fpsLimit":0},"dataVersion":5}""")
+        assertEquals(60, unlimited.settings.fpsLimit)
+        val chosen = BackupCodec.decode("""{"settings":{"fpsLimit":30},"dataVersion":5}""")
+        assertEquals(30, chosen.settings.fpsLimit)
+        // v6 以降で「制限なし」を選び直した場合はそのまま
+        val again = BackupCodec.decode("""{"settings":{"fpsLimit":0},"dataVersion":6}""")
+        assertEquals(0, again.settings.fpsLimit)
     }
 
     @Test

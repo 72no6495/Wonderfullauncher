@@ -552,8 +552,8 @@ data class LauncherSettings(
     // ── 軽量化 ──
     /** ぼかし・残像・粒・画面エフェクトなど重い演出をまとめて止める */
     val liteMode: Boolean = false,
-    /** 描画の最大フレームレート（0 = 制限なし） */
-    val fpsLimit: Int = 0,
+    /** 描画の最大フレームレート（0 = 制限なし＝画面の最大。144Hz の端末だと 144fps になり発熱する） */
+    val fpsLimit: Int = 60,
     /** 何秒操作しないと動く壁紙と自動回転を止めるか（0 = 止めない） */
     val idleSleepSec: Float = 0f,
 

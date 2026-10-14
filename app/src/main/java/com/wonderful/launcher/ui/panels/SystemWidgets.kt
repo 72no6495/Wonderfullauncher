@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -294,9 +295,14 @@ fun BoostWidget(vm: LauncherViewModel) {
     var running by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<String?>(null) }
     val sweep = remember { Animatable(0f) }
-    val spin by rememberInfiniteTransition(label = "boost").animateFloat(
-        0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart), label = "spin",
-    )
+    // 解放中だけ回す（待機中はフレームを要求しない）
+    val spin = remember { Animatable(0f) }
+    LaunchedEffect(running) {
+        while (running) {
+            spin.snapTo(0f)
+            spin.animateTo(360f, tween(900, easing = LinearEasing))
+        }
+    }
     MonitorCard("// BOOST", p.pink) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(
@@ -319,7 +325,7 @@ fun BoostWidget(vm: LauncherViewModel) {
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                Canvas(Modifier.fillMaxSize().graphicsLayer { rotationZ = if (running) spin else 0f }) {
+                Canvas(Modifier.fillMaxSize().graphicsLayer { rotationZ = if (running) spin.value else 0f }) {
                     drawArc(
                         p.cyan, -90f, 360f * (if (running) 0.3f else 1f - st.memUsedRatio), false,
                         Offset(6.dp.toPx(), 6.dp.toPx()), Size(size.width - 12.dp.toPx(), size.height - 12.dp.toPx()),
