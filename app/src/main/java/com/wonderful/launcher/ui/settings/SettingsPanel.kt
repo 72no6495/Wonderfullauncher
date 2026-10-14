@@ -34,6 +34,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +71,7 @@ import com.wonderful.launcher.ui.LauncherViewModel
 import com.wonderful.launcher.ui.Panel
 import com.wonderful.launcher.data.GestureSlot
 import com.wonderful.launcher.data.TapEffect
+import com.wonderful.launcher.data.TrailStyle
 import android.os.Build
 import com.wonderful.launcher.data.Migration
 import com.wonderful.launcher.data.SpecialPermission
@@ -128,7 +130,10 @@ fun SettingsPanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var tab by rememberSaveable { mutableStateOf(Tab.SPHERE) }
+    // 最後に開いていたタブを覚えておく（パネルを閉じても ViewModel に残る）
+    val tab = Tab.entries.getOrElse(vm.settingsTab) { Tab.SPHERE }
+    val tabRowScroll = rememberScrollState(vm.settingsTabRowScroll)
+    DisposableEffect(Unit) { onDispose { vm.settingsTabRowScroll = tabRowScroll.value } }
     val p = LocalPalette.current
     val s = data.settings
     val update: ((LauncherSettings) -> LauncherSettings) -> Unit = { vm.updateSettings(it) }
@@ -140,11 +145,11 @@ fun SettingsPanel(
         Row(
             Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
+                .horizontalScroll(tabRowScroll)
                 .padding(horizontal = 10.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Tab.entries.forEach { t -> RetroChip(t.label, t == tab, { tab = t }) }
+            Tab.entries.forEach { t -> RetroChip(t.label, t == tab, { vm.settingsTab = t.ordinal }) }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(p.pink, p.cyan))))
         AnimatedContent(
@@ -159,7 +164,7 @@ fun SettingsPanel(
         ) { t ->
             when (t) {
                 Tab.APPS -> AppsTab(data, apps, icons, vm)
-                else -> ScrollTab {
+                else -> ScrollTab(t.ordinal, vm) {
                     when (t) {
                         Tab.SPHERE -> SphereTab(s, update, vm, onResetSphere)
                         Tab.BUTTONS -> ButtonsTab(s, update)
@@ -239,11 +244,14 @@ private fun AppChooser(
 }
 
 @Composable
-private fun ScrollTab(content: @Composable ColumnScope.() -> Unit) {
+private fun ScrollTab(key: Int, vm: LauncherViewModel, content: @Composable ColumnScope.() -> Unit) {
+    // タブごとのスクロール位置も覚えておく
+    val scroll = rememberScrollState(vm.settingsScroll[key] ?: 0)
+    DisposableEffect(key) { onDispose { vm.settingsScroll[key] = scroll.value } }
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scroll)
             .padding(horizontal = 16.dp)
             .padding(bottom = 40.dp),
         content = content,
@@ -297,6 +305,7 @@ private fun SphereTab(s: LauncherSettings, u: Update, vm: LauncherViewModel, onR
     SectionHeader("操作とアニメーション")
     SwitchSetting("ピンチで拡大縮小", s.pinchToZoom) { v -> u { it.copy(pinchToZoom = v) } }
     ChoiceSetting("タップした時の動き", TapEffect.entries, s.tapEffect, { it.label }) { v -> u { it.copy(tapEffect = v) } }
+    SwitchSetting("タップで光の粒（パーティクル）", s.tapParticles, "OFF にするとアプリをタップしても粒が出なくなります") { v -> u { it.copy(tapParticles = v) } }
     SwitchSetting("起動時ズームアニメ", s.launchZoom, "アイコンからアプリが広がる") { v -> u { it.copy(launchZoom = v) } }
     SwitchSetting("出現アニメーション", s.entranceAnim, "アプリ追加時に中心から飛び出す") { v -> u { it.copy(entranceAnim = v) } }
     SwitchSetting("振動フィードバック", s.haptics) { v -> u { it.copy(haptics = v) } }
@@ -375,8 +384,15 @@ private fun EffectsTab(s: LauncherSettings, u: Update) {
         "アイコンがバネのように遅れてついてきて、伸び縮みします。ボタンの弾みにも影響",
         format = { if (it < 0.01f) "OFF" else pct(it) },
     ) { v -> u { it.copy(rubber = v) } }
+    if (s.rubber > 0.01f) {
+        SliderSetting("弾み", s.rubberBounce, 0f..1f, "大きいほど長くビヨンビヨン揺れる", format = ::pct) { v -> u { it.copy(rubberBounce = v) } }
+        SliderSetting("伸び縮み", s.rubberStretch, 0f..1f, "動く向きに伸びる強さ", format = { if (it < 0.01f) "OFF" else pct(it) }) { v -> u { it.copy(rubberStretch = v) } }
+        SliderSetting("遅れの最大", s.rubberMaxLag, 0.1f..3f, "アイコン何個ぶんまで遅れてついてくるか", format = { "%.1f個".format(it) }) { v -> u { it.copy(rubberMaxLag = v) } }
+        SwitchSetting("速く回した時は揺れを抑える", s.rubberSpeedLimit, "素早いスワイプでもアイコンがぐちゃっとならない") { v -> u { it.copy(rubberSpeedLimit = v) } }
+        SwitchSetting("ボタンやアイコンも弾ませる", s.rubberButtons, "四隅のボタン・ドック・一覧のアイコン") { v -> u { it.copy(rubberButtons = v) } }
+    }
     ChoiceSetting("タップした時の動き", TapEffect.entries, s.tapEffect, { it.label }) { v -> u { it.copy(tapEffect = v) } }
-    SwitchSetting("タップで火花", s.tapParticles, "アイコンから光の粒が飛び散る") { v -> u { it.copy(tapParticles = v) } }
+    SwitchSetting("タップで光の粒（パーティクル）", s.tapParticles, "OFF にするとアプリをタップしても粒が出なくなります") { v -> u { it.copy(tapParticles = v) } }
 
     SectionHeader("ぼかし")
     if (!blurOk) RetroLabel("※ ぼかしは Android 12 以降で使えます", size = 11.sp, color = p.yellow)
@@ -387,10 +403,25 @@ private fun EffectsTab(s: LauncherSettings, u: Update) {
     SwitchSetting("パネル表示中に背景をぼかす", s.panelBlur) { v -> u { it.copy(panelBlur = v) } }
     SliderSetting("壁紙のぼかし", s.wallpaperBlur, 0f..1f, format = ::pct) { v -> u { it.copy(wallpaperBlur = v) } }
 
+    SectionHeader("グロー（発光）")
+    SwitchSetting("ネオングロー", s.iconGlow) { v -> u { it.copy(iconGlow = v) } }
+    if (s.iconGlow) {
+        SliderSetting("光の強さ", s.glowIntensity, 0.05f..1f, format = ::pct) { v -> u { it.copy(glowIntensity = v) } }
+        SliderSetting("光の大きさ", s.glowSize, 0.3f..3f, format = { "x%.1f".format(it) }) { v -> u { it.copy(glowSize = v) } }
+        SwitchSetting("奥のアイコンも光らせる", s.glowAll) { v -> u { it.copy(glowAll = v) } }
+        SwitchSetting("ゆっくり明滅", s.glowPulse) { v -> u { it.copy(glowPulse = v) } }
+        SwitchSetting("虹色グロー", s.rainbowGlow, "アイコンの光が虹色に変化し続ける") { v -> u { it.copy(rainbowGlow = v) } }
+    }
+
+    SectionHeader("残像（トレイル）")
+    SliderSetting("残像の長さ", s.trailLength, 0f..1f, "回すと軌跡が残る", format = { if (it < 0.01f) "OFF" else pct(it) }) { v -> u { it.copy(trailLength = v) } }
+    if (s.trailLength > 0.01f) {
+        ChoiceSetting("残像の見た目", TrailStyle.entries, s.trailStyle, { it.label }) { v -> u { it.copy(trailStyle = v) } }
+        SliderSetting("残像の間隔", s.trailSpacing, 0f..1f, "大きいほど残像が離れて長く伸びる", format = ::pct) { v -> u { it.copy(trailSpacing = v) } }
+    }
+
     SectionHeader("アイコンの動き")
     SliderSetting("ふわふわ浮遊", s.iconFloat, 0f..1f, format = { if (it < 0.01f) "OFF" else pct(it) }) { v -> u { it.copy(iconFloat = v) } }
-    SliderSetting("残像（トレイル）", s.trailLength, 0f..1f, "回すと軌跡が残る", format = { if (it < 0.01f) "OFF" else pct(it) }) { v -> u { it.copy(trailLength = v) } }
-    SwitchSetting("虹色グロー", s.rainbowGlow, "アイコンの光が虹色に変化し続ける") { v -> u { it.copy(rainbowGlow = v) } }
 
     SectionHeader("画面全体")
     SliderSetting("フィルムグレイン", s.filmGrain, 0f..1f, "古い映像のようなザラザラ", format = { if (it < 0.01f) "OFF" else pct(it) }) { v -> u { it.copy(filmGrain = v) } }
@@ -404,7 +435,8 @@ private fun EffectsTab(s: LauncherSettings, u: Update) {
         RetroButton("控えめ", { u { it.copy(rubber = 0.15f, tapEffect = TapEffect.BOUNCE, tapParticles = false, iconFloat = 0f, trailLength = 0f, rainbowGlow = false, filmGrain = 0f, vhsTracking = false, glitchOverlay = false) } }, color = p.cyan)
         RetroButton("ぷるぷる", { u { it.copy(rubber = 0.85f, tapEffect = TapEffect.JELLY, tapParticles = true, iconFloat = 0.4f) } }, color = p.pink)
         RetroButton("VHS", { u { it.copy(filmGrain = 0.6f, vhsTracking = true, glitchOverlay = true, scanlines = true, chromaticText = true) } }, color = p.yellow)
-        RetroButton("全部盛り", { u { it.copy(rubber = 0.9f, tapEffect = TapEffect.JELLY, tapParticles = true, iconFloat = 0.6f, trailLength = 0.7f, rainbowGlow = true, dofBlur = 0.6f, filmGrain = 0.4f, vhsTracking = true, glitchOverlay = true) } }, color = p.mint)
+        RetroButton("ネオン軌跡", { u { it.copy(iconGlow = true, glowIntensity = 0.9f, glowSize = 1.4f, trailLength = 0.8f, trailStyle = TrailStyle.NEON, rainbowGlow = true) } }, color = p.purple)
+        RetroButton("全部盛り", { u { it.copy(rubber = 0.9f, rubberBounce = 0.8f, tapEffect = TapEffect.JELLY, tapParticles = true, iconFloat = 0.6f, trailLength = 0.7f, rainbowGlow = true, glowPulse = true, dofBlur = 0.6f, filmGrain = 0.4f, vhsTracking = true, glitchOverlay = true) } }, color = p.mint)
     }
 }
 
@@ -441,30 +473,7 @@ private fun WallpaperTab(s: LauncherSettings, u: Update) {
         SectionHeader("アニメーション")
         SliderSetting("背景の動く速さ", s.gridSpeed, 0.1f..4f, format = { "x%.1f".format(it) }) { v -> u { it.copy(gridSpeed = v) } }
     }
-    when (s.wallpaperType) {
-        WallpaperType.MAZE -> {
-            SectionHeader("迷路")
-            RetroLabel("迷路を自動で作り（ピンク）、左上から右下へ自動で解きます（水色 → 黄色の道）", size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 3)
-            SliderSetting("マスの大きさ", s.mazeCellDp, 14f..60f, "小さいほど複雑な迷路", format = { "${it.toInt()}dp" }) { v -> u { it.copy(mazeCellDp = v) } }
-        }
-        WallpaperType.GLITCH -> {
-            SectionHeader("グリッチ")
-            SliderSetting("グリッチの強さ", s.glitchIntensity, 0f..1f, format = ::pct) { v -> u { it.copy(glitchIntensity = v) } }
-        }
-        else -> Unit
-    }
-    if (s.wallpaperType == WallpaperType.VAPOR_GRID) {
-        SectionHeader("ヴェイパー風景")
-        SwitchSetting("太陽", s.showSun) { v -> u { it.copy(showSun = v) } }
-        if (s.showSun) SwitchSetting("太陽の横縞", s.sunStripes) { v -> u { it.copy(sunStripes = v) } }
-        SwitchSetting("山", s.showMountains) { v -> u { it.copy(showMountains = v) } }
-        SwitchSetting("星", s.showStars) { v -> u { it.copy(showStars = v) } }
-    }
-    if (s.wallpaperType == WallpaperType.GRADIENT) {
-        SectionHeader("グラデーション")
-        SliderSetting("角度", s.gradientAngle, 0f..360f, format = { "${it.toInt()}°" }) { v -> u { it.copy(gradientAngle = v) } }
-        RetroLabel("色は「見た目 → カラーテーマ」に連動します", size = 11.sp, color = p.text.copy(alpha = 0.6f))
-    }
+    WallpaperDetailSettings(s, u)
     if (s.wallpaperType == WallpaperType.SOLID) {
         SectionHeader("単色")
         ColorSetting("背景色", s.solidColor) { v -> u { it.copy(solidColor = v) } }

@@ -90,6 +90,53 @@ class BackupCompatTest {
     }
 
     @Test
+    fun v3BackupMovesWallpaperSettings() {
+        // backup_v3.json は v3（動く背景・エフェクト追加版）のコードで書き出したもの
+        val d = BackupCodec.decode(fixture("backup_v3.json"))
+        assertEquals(Migration.CURRENT_VERSION, d.dataVersion)
+        val s = d.settings
+        assertEquals(WallpaperType.MAZE, s.wallpaperType)
+        // v3 の迷路・グリッチ設定は、壁紙ごとの詳細設定へ移る
+        assertEquals(40f, s.maze.cellDp, 0.001f)
+        assertEquals(0.9f, s.glitch.intensity, 0.001f)
+        // エフェクト設定はそのまま
+        assertEquals(0.95f, s.rubber, 0.001f)
+        assertEquals(TapEffect.SPIN, s.tapEffect)
+        assertEquals(0.7f, s.trailLength, 0.001f)
+        assertTrue(s.rainbowGlow)
+        assertTrue(s.vhsTracking)
+        assertEquals(PalettePreset.SYNTHWAVE, s.palette)
+        // 新しい詳細設定は初期値
+        assertEquals(LifeConfig(), s.life)
+        assertEquals(LauncherSettings().rubberBounce, s.rubberBounce, 0.0001f)
+        // データ
+        assertEquals("TOOLS", d.folders.single().name)
+        assertEquals(WidgetKind.CLOCK, d.widgets.single().kind)
+        assertEquals(listOf("com.a/.Main", "com.b/.Main"), d.sphereApps)
+    }
+
+    @Test
+    fun brokenNestedConfigFallsBackToDefaults() {
+        // 壁紙の詳細設定の 1 つが壊れていても、他の設定は残る
+        val text = """{"settings":{"palette":"MIAMI","life":{"rule":"CONWAY","cellDp":"big"},
+            "maze":{"cellDp":30.0,"solver":"DFS"}},"dataVersion":4}"""
+        val d = BackupCodec.decode(text)
+        assertEquals(PalettePreset.MIAMI, d.settings.palette)
+        assertEquals(LifeConfig(), d.settings.life)
+        assertEquals(MazeSolver.DFS, d.settings.maze.solver)
+        assertEquals(30f, d.settings.maze.cellDp, 0.001f)
+    }
+
+    @Test
+    fun extremeValuesAreClamped() {
+        val text = """{"settings":{"life":{"cellDp":0.5,"stepMs":1.0},"starfield":{"count":999999}},"dataVersion":4}"""
+        val s = BackupCodec.decode(text).settings
+        assertTrue(s.life.cellDp >= 5f)
+        assertTrue(s.life.stepMs >= 16f)
+        assertTrue(s.starfield.count <= 1500)
+    }
+
+    @Test
     fun currentFormatRoundTrips() {
         val original = BackupCodec.decode(fixture("backup_v1.json")).copy(
             widgets = listOf(WidgetItem("w1", WidgetKind.NOTE, x = 2, y = 3, w = 4, h = 2, text = "メモ")),

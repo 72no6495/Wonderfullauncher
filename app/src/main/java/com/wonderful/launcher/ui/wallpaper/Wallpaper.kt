@@ -92,7 +92,7 @@ private fun GradientWallpaper(s: LauncherSettings, p: RetroPalette, modifier: Mo
         label = "t",
     )
     Canvas(modifier) {
-        val a = Math.toRadians((s.gradientAngle + t * 40f).toDouble())
+        val a = Math.toRadians((s.gradientAngle + (if (s.gradientAnimate) t * 40f else 0f)).toDouble())
         val r = size.maxDimension
         val c = Offset(size.width / 2, size.height / 2)
         val d = Offset((cos(a) * r).toFloat(), (sin(a) * r).toFloat())
@@ -116,9 +116,10 @@ fun VaporScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: 
         infiniteRepeatable(tween((6000 / s.animSpeed).toInt(), easing = LinearEasing)),
         label = "twinkle",
     )
-    val stars = remember {
+    val v = s.vapor
+    val stars = remember(v.starCount) {
         val r = Random(42)
-        List(90) { Triple(r.nextFloat(), r.nextFloat() * 0.58f, r.nextFloat()) }
+        List(v.starCount) { Triple(r.nextFloat(), r.nextFloat() * 0.95f, r.nextFloat()) }
     }
     val phase = if (paused) 0f else gridPhase
 
@@ -126,10 +127,10 @@ fun VaporScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: 
         modifier.drawWithCache {
             val w = size.width
             val h = size.height
-            val horizon = h * 0.62f
+            val horizon = h * v.horizon
             val sky = Brush.verticalGradient(listOf(p.skyTop, p.skyMid, p.skyBottom), 0f, horizon)
             val ground = Brush.verticalGradient(listOf(p.ground, Color.Black), horizon, h)
-            val sunR = w * 0.3f
+            val sunR = w * 0.3f * v.sunSize
             val sunC = Offset(w / 2f, horizon - sunR * 0.35f)
             val sunBrush = Brush.verticalGradient(listOf(p.sunTop, p.sunBottom), sunC.y - sunR, sunC.y + sunR)
             val mountains = Path().apply {
@@ -149,7 +150,7 @@ fun VaporScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: 
                 if (s.showStars) {
                     stars.forEachIndexed { i, (sx, sy, tw) ->
                         val a = 0.35f + 0.65f * ((sin(twinkle + tw * 12f) + 1f) / 2f)
-                        drawCircle(if (i % 3 == 0) p.cyan else Color.White, 1.2f + tw * 1.6f, Offset(sx * w, sy * horizon), alpha = a * 0.9f)
+                        drawCircle(if (i % 3 == 0) p.cyan else Color.White, 1.2f + tw * 1.6f, Offset(sx * w, sy * horizon * 0.95f), alpha = a * 0.9f)
                     }
                 }
                 if (s.showSun) {
@@ -186,17 +187,20 @@ fun VaporScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: 
                 drawRect(ground, Offset(0f, horizon), Size(w, h - horizon))
                 val gridColor = p.grid
                 val vanish = Offset(w / 2f, horizon)
-                val lines = 22
+                val spacing = w * 0.16f / v.gridDensity.coerceAtLeast(0.3f)
+                val lines = (w * 3.5f / spacing).toInt()
                 for (i in -lines..lines) {
-                    val bx = w / 2f + i * w * 0.16f
+                    val bx = w / 2f + i * spacing
+                    if (v.gridGlow) drawLine(gridColor.copy(alpha = 0.18f), vanish, Offset(bx, h), 7f)
                     drawLine(gridColor.copy(alpha = 0.75f), vanish, Offset(bx, h), 2f)
                 }
                 // 奥から手前へ流れる横線（遠くほど詰まる）
-                val rows = 14
+                val rows = (14 * v.gridDensity).toInt().coerceIn(4, 60)
                 for (k in 0 until rows) {
                     val z = (k + phase) / rows
                     val y = horizon + (h - horizon) * z * z
                     val a = (0.15f + z * 0.85f).coerceIn(0f, 1f)
+                    if (v.gridGlow) drawLine(gridColor.copy(alpha = a * 0.2f), Offset(0f, y), Offset(w, y), 6f + z * 6f)
                     drawLine(gridColor.copy(alpha = a), Offset(0f, y), Offset(w, y), 1.5f + z * 2f)
                 }
                 // 地平線の発光
