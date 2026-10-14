@@ -8,6 +8,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.TileMode
 import com.wonderful.launcher.ui.wallpaper.ScreenEffects
+import com.wonderful.launcher.ui.wallpaper.WallpaperTouch
+import com.wonderful.launcher.data.WallpaperType
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
@@ -227,6 +229,10 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                         onTwoFingerSwipe = { up ->
                             runGesture(if (up) GestureSlot.TWO_FINGER_UP else GestureSlot.TWO_FINGER_DOWN)
                         },
+                        // 触れる壁紙（ライフゲーム）にタップ位置を渡す
+                        onTapEmpty = if (s.wallpaperType == WallpaperType.LIFE && s.life.touch) {
+                            { pos -> WallpaperTouch.taps.tryEmit(pos) }
+                        } else null,
                     )
                     if (sphereApps.isEmpty() && apps.isNotEmpty()) {
                         EmptyMessage(

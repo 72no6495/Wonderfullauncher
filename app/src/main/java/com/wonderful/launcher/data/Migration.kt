@@ -15,12 +15,13 @@ import kotlinx.serialization.json.jsonObject
 object Migration {
 
     /** 現在の保存形式バージョン */
-    const val CURRENT_VERSION = 3
+    const val CURRENT_VERSION = 4
 
     fun migrate(input: LauncherData): LauncherData {
         var d = input
         if (d.dataVersion < 2) d = v1ToV2(d)
         if (d.dataVersion < 3) d = v2ToV3(d)
+        if (d.dataVersion < 4) d = v3ToV4(d)
         return sanitize(d.copy(dataVersion = maxOf(d.dataVersion, CURRENT_VERSION)))
     }
 
@@ -46,6 +47,21 @@ object Migration {
         val s = d.settings
         val effect = if (s.tapBounce) s.tapEffect else TapEffect.NONE
         return d.copy(settings = s.copy(tapEffect = effect), dataVersion = 3)
+    }
+
+    /**
+     * v3 → v4
+     * - 迷路とグリッチの設定を、壁紙ごとの詳細設定へ移動
+     */
+    private fun v3ToV4(d: LauncherData): LauncherData {
+        val s = d.settings
+        return d.copy(
+            settings = s.copy(
+                maze = s.maze.copy(cellDp = s.mazeCellDp),
+                glitch = s.glitch.copy(intensity = s.glitchIntensity),
+            ),
+            dataVersion = 4,
+        )
     }
 
     /**
@@ -80,6 +96,25 @@ object Migration {
             filmGrain = s.filmGrain.finiteIn(0f, 1f, 0f),
             mazeCellDp = s.mazeCellDp.finiteIn(14f, 60f, 26f),
             glitchIntensity = s.glitchIntensity.finiteIn(0f, 1f, 0.5f),
+            rubberBounce = s.rubberBounce.finiteIn(0f, 1f, 0.6f),
+            rubberStretch = s.rubberStretch.finiteIn(0f, 1f, 0.5f),
+            rubberMaxLag = s.rubberMaxLag.finiteIn(0.1f, 3f, 0.8f),
+            glowSize = s.glowSize.finiteIn(0.3f, 3f, 1f),
+            trailSpacing = s.trailSpacing.finiteIn(0f, 1f, 0.5f),
+            // 重くなりすぎないよう、細かさや数には上限を付ける
+            maze = s.maze.copy(cellDp = s.maze.cellDp.finiteIn(12f, 80f, 26f), holdSec = s.maze.holdSec.finiteIn(0f, 30f, 2.6f)),
+            life = s.life.copy(
+                cellDp = s.life.cellDp.finiteIn(5f, 60f, 12f),
+                stepMs = s.life.stepMs.finiteIn(16f, 2000f, 110f),
+                density = s.life.density.finiteIn(0.01f, 0.95f, 0.28f),
+                maxGenerations = s.life.maxGenerations.coerceIn(50, 100000),
+            ),
+            matrix = s.matrix.copy(charSizeDp = s.matrix.charSizeDp.finiteIn(8f, 48f, 18f)),
+            starfield = s.starfield.copy(count = s.starfield.count.coerceIn(10, 1500)),
+            underwater = s.underwater.copy(bubbles = s.underwater.bubbles.coerceIn(0, 300), fish = s.underwater.fish.coerceIn(0, 40)),
+            lava = s.lava.copy(blobs = s.lava.blobs.coerceIn(1, 20)),
+            aurora = s.aurora.copy(ribbons = s.aurora.ribbons.coerceIn(1, 8)),
+            vapor = s.vapor.copy(starCount = s.vapor.starCount.coerceIn(0, 500), horizon = s.vapor.horizon.finiteIn(0.3f, 0.85f, 0.62f)),
         )
         if (!settingsReachable(s)) s = s.copy(longPressAction = GestureAction.SETTINGS)
 

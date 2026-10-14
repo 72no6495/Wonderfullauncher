@@ -47,6 +47,179 @@ enum class WallpaperType(val label: String, val animated: Boolean = true) {
     LIFE("ライフゲーム"),
 }
 
+/** 残像の描き方 */
+enum class TrailStyle(val label: String) {
+    GHOST("アイコン"),
+    NEON("ネオン光"),
+    LINE("光の線"),
+}
+
+enum class MazeSolver(val label: String) {
+    BFS("幅優先"),
+    DFS("深さ優先"),
+    ASTAR("A*"),
+    RIGHT_HAND("右手法"),
+}
+
+enum class MazeGenerator(val label: String) {
+    BACKTRACK("穴掘り"),
+    PRIM("プリム"),
+}
+
+enum class MatrixCharset(val label: String, val chars: String) {
+    KATAKANA("カタカナ", "ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝ0123456789"),
+    BINARY("2進数", "01"),
+    HEX("16進数", "0123456789ABCDEF"),
+    SYMBOLS("記号", "★☆♪♫◆◇○●□■△▽※♥♦♣♠"),
+}
+
+enum class ColorMode(val label: String) {
+    PALETTE("テーマ色"),
+    CLASSIC("緑"),
+    RAINBOW("虹"),
+}
+
+/** ライフゲームのルール（B=誕生する近傍数 / S=生き残る近傍数） */
+enum class LifeRule(val label: String, val birth: String, val survive: String) {
+    CONWAY("コンウェイ", "3", "23"),
+    HIGHLIFE("ハイライフ", "36", "23"),
+    DAY_NIGHT("昼と夜", "3678", "34678"),
+    SEEDS("シーズ", "2", ""),
+    MAZE("迷路", "3", "12345"),
+    CORAL("サンゴ", "3", "45678"),
+    NO_DEATH("不死", "3", "012345678"),
+    TWO_BY_TWO("2x2", "36", "125"),
+    MOVE("ムーブ", "368", "245"),
+    AMOEBA("アメーバ", "357", "1358"),
+    REPLICATOR("複製", "1357", "1357"),
+    DIAMOEBA("ダイアメーバ", "35678", "5678"),
+    ANNEAL("アニール", "4678", "35678"),
+}
+
+enum class LifeColor(val label: String) {
+    AGE("年齢"),
+    RAINBOW("虹"),
+    NEIGHBORS("近傍数"),
+    HEAT("ヒート"),
+    MONO("単色"),
+}
+
+enum class CellShape(val label: String) {
+    SQUARE("四角"),
+    ROUND("丸"),
+    DIAMOND("ひし形"),
+    PIXEL("ドット"),
+}
+
+enum class LifeSeed(val label: String) {
+    RANDOM("ランダム"),
+    SYMMETRIC("対称"),
+    GLIDERS("グライダー群"),
+    GUN("グライダー銃"),
+    R_PENTOMINO("Rペントミノ"),
+    SOUP("中央に塊"),
+}
+
+// ── 壁紙ごとの詳細設定 ──
+
+@Serializable
+data class VaporConfig(
+    val horizon: Float = 0.62f,
+    val gridDensity: Float = 1f,
+    val sunSize: Float = 1f,
+    val starCount: Int = 90,
+    val gridGlow: Boolean = true,
+)
+
+@Serializable
+data class UnderwaterConfig(
+    val bubbles: Int = 46,
+    val fish: Int = 6,
+    val lightRays: Boolean = true,
+    val caustics: Boolean = true,
+    val seaweed: Boolean = true,
+    val plankton: Boolean = true,
+    val depth: Float = 0.5f,
+)
+
+@Serializable
+data class MazeConfig(
+    val cellDp: Float = 26f,
+    val generator: MazeGenerator = MazeGenerator.BACKTRACK,
+    val solver: MazeSolver = MazeSolver.BFS,
+    val genSpeed: Float = 1f,
+    val solveSpeed: Float = 1f,
+    val showSearch: Boolean = true,
+    val holdSec: Float = 2.6f,
+    val wallWidth: Float = 1f,
+    val wallGlow: Boolean = true,
+)
+
+@Serializable
+data class GlitchConfig(
+    val intensity: Float = 0.5f,
+    val frequency: Float = 0.5f,
+    val showText: Boolean = true,
+    val text: String = "ｗｏｎｄｅｒｆｕｌ",
+    val invertFlash: Boolean = true,
+    val shapes: Boolean = true,
+)
+
+@Serializable
+data class MatrixConfig(
+    val charSizeDp: Float = 18f,
+    val density: Float = 1f,
+    val trail: Float = 1f,
+    val charset: MatrixCharset = MatrixCharset.KATAKANA,
+    val color: ColorMode = ColorMode.PALETTE,
+)
+
+@Serializable
+data class StarfieldConfig(
+    val count: Int = 260,
+    val warp: Float = 1f,
+    val streak: Float = 1f,
+    val centerGlow: Boolean = true,
+    val color: ColorMode = ColorMode.PALETTE,
+)
+
+@Serializable
+data class LavaConfig(
+    val blobs: Int = 7,
+    val size: Float = 1f,
+    val glossy: Boolean = true,
+)
+
+@Serializable
+data class AuroraConfig(
+    val ribbons: Int = 3,
+    val brightness: Float = 1f,
+    val stars: Boolean = true,
+    val mountains: Boolean = true,
+)
+
+@Serializable
+data class LifeConfig(
+    val cellDp: Float = 12f,
+    val stepMs: Float = 110f,
+    val density: Float = 0.28f,
+    val rule: LifeRule = LifeRule.CONWAY,
+    val wrap: Boolean = true,
+    val shape: CellShape = CellShape.SQUARE,
+    val color: LifeColor = LifeColor.AGE,
+    val afterglow: Float = 0.5f,
+    val cellGap: Float = 0.18f,
+    val glow: Boolean = true,
+    val gridLines: Boolean = false,
+    val hud: Boolean = true,
+    val seed: LifeSeed = LifeSeed.RANDOM,
+    val autoReseed: Boolean = true,
+    val maxGenerations: Int = 600,
+    val injectGliders: Boolean = false,
+    /** 何もない所をタップするとセルを置ける */
+    val touch: Boolean = true,
+)
+
 /** アイコンをタップした時の動き */
 enum class TapEffect(val label: String) {
     JELLY("ぷるん"),
@@ -232,8 +405,18 @@ data class LauncherSettings(
     val sunStripes: Boolean = true,
     val solidColor: Long = 0xFF1A0033,
     val gradientAngle: Float = 90f,
-    val mazeCellDp: Float = 26f,
-    val glitchIntensity: Float = 0.5f,
+    val mazeCellDp: Float = 26f, // v3 の項目。v4 からは maze.cellDp
+    val glitchIntensity: Float = 0.5f, // v3 の項目。v4 からは glitch.intensity
+    val vapor: VaporConfig = VaporConfig(),
+    val underwater: UnderwaterConfig = UnderwaterConfig(),
+    val maze: MazeConfig = MazeConfig(),
+    val glitch: GlitchConfig = GlitchConfig(),
+    val matrix: MatrixConfig = MatrixConfig(),
+    val starfield: StarfieldConfig = StarfieldConfig(),
+    val lava: LavaConfig = LavaConfig(),
+    val aurora: AuroraConfig = AuroraConfig(),
+    val life: LifeConfig = LifeConfig(),
+    val gradientAnimate: Boolean = true,
 
     // ── 時計 ──
     val showClock: Boolean = true,
@@ -287,6 +470,21 @@ data class LauncherSettings(
     // ── エフェクト ──
     /** ゴムのようにビヨンビヨン（0 = OFF） */
     val rubber: Float = 0.45f,
+    /** 弾み（大きいほど揺れが長く続く） */
+    val rubberBounce: Float = 0.6f,
+    /** 伸び縮みの強さ */
+    val rubberStretch: Float = 0.5f,
+    /** どこまで遅れてついてくるか（アイコン何個ぶん） */
+    val rubberMaxLag: Float = 0.8f,
+    /** ボタンやタイルも弾ませる */
+    val rubberButtons: Boolean = true,
+    /** 回転が速いほど揺れを抑える（裏返り防止） */
+    val rubberSpeedLimit: Boolean = true,
+    val glowSize: Float = 1f,
+    val glowAll: Boolean = false,
+    val glowPulse: Boolean = false,
+    val trailStyle: TrailStyle = TrailStyle.NEON,
+    val trailSpacing: Float = 0.5f,
     val tapEffect: TapEffect = TapEffect.JELLY,
     val tapParticles: Boolean = true,
     val iconFloat: Float = 0f,

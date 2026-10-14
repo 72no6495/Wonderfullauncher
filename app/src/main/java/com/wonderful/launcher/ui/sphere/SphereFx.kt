@@ -32,7 +32,12 @@ class SphereFx {
     /** 伸び率（1 = 伸びなし）と伸びる向き（度） */
     var stretch = FloatArray(0); private set
     var stretchAngle = FloatArray(0); private set
+    /** 伸びる向きと垂直な方向の縮み率 */
+    var squash = FloatArray(0); private set
     var floatY = FloatArray(0); private set
+    private var lastTX = FloatArray(0)
+    private var lastTY = FloatArray(0)
+    private var trailClock = 0f
 
     // 残像
     private var trailX = FloatArray(0)
@@ -62,7 +67,7 @@ class SphereFx {
     }
 
     fun needsFrames(s: LauncherSettings): Boolean =
-        moving || particlesAlive || s.iconFloat > 0f || s.rainbowGlow || settle > 0
+        moving || particlesAlive || s.iconFloat > 0f || s.rainbowGlow || s.glowPulse || settle > 0
 
     fun reset() {
         x = FloatArray(0)
@@ -72,6 +77,7 @@ class SphereFx {
         if (x.size == n) return
         x = FloatArray(n) { Float.NaN }; y = FloatArray(n); vx = FloatArray(n); vy = FloatArray(n)
         stretch = FloatArray(n) { 1f }; stretchAngle = FloatArray(n); floatY = FloatArray(n)
+        squash = FloatArray(n) { 1f }; lastTX = FloatArray(n); lastTY = FloatArray(n)
         trailX = FloatArray(n * TRAIL_MAX); trailY = FloatArray(n * TRAIL_MAX)
         trailHead = 0; trailFilled = 0
     }
@@ -85,39 +91,75 @@ class SphereFx {
         val rub = s.rubber.coerceIn(0f, 1f)
         moving = false
 
-        val k = 520f - 450f * rub                      // 柔らかいほど遅れる
-        val c = 2f * sqrt(k) * (1f - 0.85f * rub)       // 減衰が少ないほどビヨンビヨン
-        val sub = 3
+        // バネの硬さ（柔らかいほど遅れてついてくる）と減衰（弾みが大きいほど長く揺れる）
+        val k = 650f - 520f * rub
+        val zeta = (1f - 0.88f * s.rubberBounce.coerceIn(0f, 1f)).coerceAtLeast(0.08f)
+        val c = 2f * zeta * sqrt(k)
+        val sub = 4
         val h = dt / sub
+        val baseLag = s.rubberMaxLag * iconPx
+        val maxStretch = 0.55f * s.rubberStretch.coerceIn(0f, 1f) * rub
+
         for (i in 0 until n) {
             val tx = e.px[i]
             val ty = e.py[i]
-            if (x[i].isNaN() || rub <= 0.001f) {
-                x[i] = tx; y[i] = ty; vx[i] = 0f; vy[i] = 0f
-            } else {
-                repeat(sub) {
-                    val ax = k * (tx - x[i]) - c * vx[i]
-                    val ay = k * (ty - y[i]) - c * vy[i]
-                    vx[i] += ax * h; vy[i] += ay * h
-                    x[i] += vx[i] * h; y[i] += vy[i] * h
-                }
-                if (abs(tx - x[i]) > 0.4f || abs(vx[i]) + abs(vy[i]) > 6f) moving = true
+            if (x[i].isNaN() || rub <= 0.001f || dt <= 0f) {
+                if (x[i].isNaN() || rub <= 0.001f) { x[i] = tx; y[i] = ty; vx[i] = 0f; vy[i] = 0f }
+                lastTX[i] = tx; lastTY[i] = ty
+                stretch[i] = 1f; squash[i] = 1f
+                floatY[i] = floatOffset(s, i, iconPx)
+                continue
             }
+            // 本来の位置の移動速度（速く回すほど遅れ幅を小さくして、ぐちゃっとならないようにする）
+            val tvx = (tx - lastTX[i]) / dt
+            val tvy = (ty - lastTY[i]) / dt
+            lastTX[i] = tx; lastTY[i] = ty
+            val tSpeed = sqrt(tvx * tvx + tvy * tvy)
+            val maxLag = if (s.rubberSpeedLimit) baseLag / (1f + tSpeed / 2500f) else baseLag
+
+            repeat(sub) {
+                val ax = k * (tx - x[i]) - c * vx[i]
+                val ay = k * (ty - y[i]) - c * vy[i]
+                vx[i] += ax * h; vy[i] += ay * h
+                x[i] += vx[i] * h; y[i] += vy[i] * h
+            }
+            // 遅れすぎたら引き戻す（離れていく向きの速度も消す）
+            val dx = x[i] - tx
+            val dy = y[i] - ty
+            val dist = sqrt(dx * dx + dy * dy)
+            if (dist > maxLag && dist > 0.001f) {
+                val nx = dx / dist
+                val ny = dy / dist
+                x[i] = tx + nx * maxLag
+                y[i] = ty + ny * maxLag
+                val away = vx[i] * nx + vy[i] * ny
+                if (away > 0f) { vx[i] -= away * nx; vy[i] -= away * ny }
+            }
+            if (dist > 0.4f || abs(vx[i]) + abs(vy[i]) > 6f) moving = true
+
+            // 伸び縮み: 動く向きに伸び、横は体積を保つ程度に少しだけ縮む（潰れない）
             val speed = sqrt(vx[i] * vx[i] + vy[i] * vy[i])
-            stretch[i] = 1f + min(speed / 2600f, 0.5f) * rub
-            stretchAngle[i] = (atan2(vy[i], vx[i]) * 180f / PI).toFloat()
-            floatY[i] = if (s.iconFloat > 0f) sin(time * 1.7f + i * 0.9f) * s.iconFloat * iconPx * 0.14f else 0f
+            val target = 1f + min(speed / 2200f, 1f) * maxStretch
+            stretch[i] += (target - stretch[i]) * 0.35f
+            squash[i] = (1f / sqrt(stretch[i])).coerceIn(0.8f, 1f)
+            if (speed > 25f) stretchAngle[i] = (atan2(vy[i], vx[i]) * 180f / PI).toFloat()
+            floatY[i] = floatOffset(s, i, iconPx)
         }
 
-        // 残像の記録
+        // 残像: 一定時間ごとに位置を記録（毎フレームだと重なって見えないため）
         if (s.trailLength > 0f && n > 0) {
-            trailHead = (trailHead + 1) % TRAIL_MAX
-            for (i in 0 until n) {
-                trailX[i * TRAIL_MAX + trailHead] = x[i]
-                trailY[i * TRAIL_MAX + trailHead] = y[i] + floatY[i]
+            trailClock += dt
+            val interval = 0.016f + s.trailSpacing.coerceIn(0f, 1f) * 0.09f
+            if (trailClock >= interval) {
+                trailClock = 0f
+                trailHead = (trailHead + 1) % TRAIL_MAX
+                for (i in 0 until n) {
+                    trailX[i * TRAIL_MAX + trailHead] = x[i]
+                    trailY[i * TRAIL_MAX + trailHead] = y[i] + floatY[i]
+                }
+                trailFilled = min(TRAIL_MAX, trailFilled + 1)
             }
-            trailFilled = min(TRAIL_MAX, trailFilled + 1)
-            settle = if (moving || e.isAnimating) TRAIL_MAX else (settle - 1).coerceAtLeast(0)
+            settle = if (moving || e.isAnimating) 120 else (settle - 1).coerceAtLeast(0)
         } else {
             trailFilled = 0; settle = 0
         }
@@ -135,9 +177,12 @@ class SphereFx {
         }
     }
 
+    private fun floatOffset(s: LauncherSettings, i: Int, iconPx: Float) =
+        if (s.iconFloat > 0f) sin(time * 1.7f + i * 0.9f) * s.iconFloat * iconPx * 0.14f else 0f
+
     /** 残像の数 */
     fun trailCount(s: LauncherSettings): Int =
-        if (s.trailLength <= 0f) 0 else min(trailFilled - 1, 1 + (s.trailLength * (TRAIL_MAX - 2)).toInt()).coerceAtLeast(0)
+        if (s.trailLength <= 0f) 0 else min(trailFilled - 1, 2 + (s.trailLength * (TRAIL_MAX - 3)).toInt()).coerceAtLeast(0)
 
     /** k 個前の残像位置 */
     fun trailX(i: Int, k: Int) = trailX[i * TRAIL_MAX + ((trailHead - k + TRAIL_MAX * 4) % TRAIL_MAX)]
@@ -172,6 +217,6 @@ class SphereFx {
     fun particleColor(j: Int) = pColor[j] ?: Color.White
 
     companion object {
-        const val TRAIL_MAX = 8
+        const val TRAIL_MAX = 16
     }
 }

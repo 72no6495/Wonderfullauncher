@@ -7,6 +7,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wonderful.launcher.data.AppInfo
@@ -135,6 +138,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
     }
+
+    // ── 設定画面の表示位置（閉じても次に開いた時に同じ所から） ──
+    var settingsTab by mutableIntStateOf(0)
+    var settingsTabRowScroll = 0
+    val settingsScroll = HashMap<Int, Int>()
 
     // ── パネル操作 ──
 

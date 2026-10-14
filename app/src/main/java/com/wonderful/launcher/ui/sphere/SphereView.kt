@@ -44,6 +44,8 @@ import androidx.compose.ui.unit.IntSize
 import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.data.LabelMode
 import com.wonderful.launcher.data.TapEffect
+import com.wonderful.launcher.data.TrailStyle
+import androidx.compose.ui.graphics.StrokeCap
 import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.graphics.BlurEffect
@@ -79,6 +81,7 @@ fun SphereView(
     onDoubleTapEmpty: (() -> Unit)?,
     onSizeCommitted: (Float) -> Unit,
     onTwoFingerSwipe: (up: Boolean) -> Unit,
+    onTapEmpty: ((Offset) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val engine = remember { SphereEngine() }
@@ -94,6 +97,7 @@ fun SphereView(
     val doubleTapCb by rememberUpdatedState(onDoubleTapEmpty)
     val sizeCommitCb by rememberUpdatedState(onSizeCommitted)
     val twoFingerCb by rememberUpdatedState(onTwoFingerSwipe)
+    val tapEmptyCb by rememberUpdatedState(onTapEmpty)
 
     // アプリ構成やレイアウトが変わったら再配置
     val keys = remember(apps) { apps.map { it.key } }
@@ -200,34 +204,65 @@ fun SphereView(
             val half = sz / 2f
             val img = icons[app.key]
 
+            // 光の色（虹色グローなら時間で変化）
+            val glowFilter = if (s.rainbowGlow) {
+                rainbowFilters[(((fx.time * 90f + i * 23f) % 360f) / 10f).toInt().coerceIn(0, rainbowFilters.lastIndex)]
+            } else glowFilters[i % glowFilters.size]
+
             // 残像
-            if (trails > 0 && img != null && t > 0.4f) {
-                for (tk in trails downTo 1) {
-                    val f = 1f - tk / (trails + 1f)
-                    val ts = sz * (0.75f + 0.25f * f)
-                    drawImage(
-                        img, IntOffset.Zero, IntSize(img.width, img.height),
-                        IntOffset((fx.trailX(i, tk) - ts / 2).toInt(), (fx.trailY(i, tk) - ts / 2).toInt()),
-                        IntSize(ts.toInt(), ts.toInt()),
-                        alpha = a * 0.35f * f,
-                    )
+            if (trails > 0 && t > 0.3f) {
+                when (s.trailStyle) {
+                    TrailStyle.GHOST -> if (img != null) {
+                        for (tk in trails downTo 1) {
+                            val f = 1f - tk / (trails + 1f)
+                            val ts = sz * (0.7f + 0.3f * f)
+                            drawImage(
+                                img, IntOffset.Zero, IntSize(img.width, img.height),
+                                IntOffset((fx.trailX(i, tk) - ts / 2).toInt(), (fx.trailY(i, tk) - ts / 2).toInt()),
+                                IntSize(ts.toInt(), ts.toInt()),
+                                alpha = a * 0.45f * f,
+                            )
+                        }
+                    }
+                    TrailStyle.NEON -> for (tk in trails downTo 1) {
+                        val f = 1f - tk / (trails + 1f)
+                        val g = half * (0.5f + 0.9f * f) * s.glowSize
+                        drawImage(
+                            glow, IntOffset.Zero, IntSize(glow.width, glow.height),
+                            IntOffset((fx.trailX(i, tk) - g).toInt(), (fx.trailY(i, tk) - g).toInt()),
+                            IntSize((g * 2).toInt(), (g * 2).toInt()),
+                            alpha = (a * 0.8f * f).coerceIn(0f, 1f), colorFilter = glowFilter,
+                        )
+                    }
+                    TrailStyle.LINE -> {
+                        var px0 = x
+                        var py0 = y
+                        val color = if (s.rainbowGlow) Color.hsv((fx.time * 90f + i * 23f) % 360f, 0.8f, 1f)
+                        else if (i % 2 == 0) palette.pink else palette.cyan
+                        for (tk in 1..trails) {
+                            val f = 1f - tk / (trails + 1f)
+                            val px1 = fx.trailX(i, tk)
+                            val py1 = fx.trailY(i, tk)
+                            drawLine(color.copy(alpha = a * f), Offset(px0, py0), Offset(px1, py1), half * 0.5f * f + 1f, StrokeCap.Round)
+                            px0 = px1; py0 = py1
+                        }
+                    }
                 }
             }
 
             // グロー
-            if (s.iconGlow && t > 0.45f) {
-                val g = half * 1.9f
-                val filter = if (s.rainbowGlow) {
-                    rainbowFilters[(((fx.time * 90f + i * 23f) % 360f) / 10f).toInt().coerceIn(0, rainbowFilters.lastIndex)]
-                } else glowFilters[i % glowFilters.size]
+            val glowWeight = if (s.glowAll) 1f else ((t - 0.35f) / 0.45f).coerceIn(0f, 1f)
+            if (s.iconGlow && glowWeight > 0f) {
+                val pulse = if (s.glowPulse) 0.55f + 0.45f * sin(fx.time * 3f + i * 0.7f) else 1f
+                val g = half * 1.9f * s.glowSize * (if (s.glowPulse) 0.9f + 0.15f * pulse else 1f)
                 drawImage(
                     glow,
                     srcOffset = IntOffset.Zero,
                     srcSize = IntSize(glow.width, glow.height),
                     dstOffset = IntOffset((x - g).toInt(), (y - g).toInt()),
                     dstSize = IntSize((g * 2).toInt(), (g * 2).toInt()),
-                    alpha = (s.glowIntensity * (t - 0.45f) / 0.55f * a).coerceIn(0f, 1f),
-                    colorFilter = filter,
+                    alpha = (s.glowIntensity * 1.3f * glowWeight * a * pulse).coerceIn(0f, 1f),
+                    colorFilter = glowFilter,
                 )
             }
 
@@ -254,15 +289,19 @@ fun SphereView(
                     TapEffect.NONE -> Unit
                 }
             }
-            val stretch = fx.stretch[i]
+            // 念のため極端な変形をしない（裏返り・潰れ防止）
+            sx = sx.coerceIn(0.6f, 1.9f)
+            sy = sy.coerceIn(0.6f, 1.9f)
+            val stretch = fx.stretch[i].coerceIn(1f, 1.6f)
+            val squash = fx.squash[i].coerceIn(0.8f, 1f)
             val center = Offset(x, y)
             withTransform({
                 if (rot != 0f) rotate(rot, center)
                 if (stretch > 1.002f) {
-                    // 動く向きに伸びて、横に縮む（ゴム）
+                    // 動く向きに伸びて、横は少しだけ細くなる（ゴム）
                     val ang = fx.stretchAngle[i]
                     rotate(ang, center)
-                    scale(stretch, 1f / stretch, center)
+                    scale(stretch, squash, center)
                     rotate(-ang, center)
                 }
                 if (sx != 1f || sy != 1f) scale(sx, sy, center)
@@ -443,13 +482,22 @@ fun SphereView(
                                     frame.intValue++
                                 }
                                 launchAt(hit)
-                            } else doubleTapCb?.let { cb ->
-                                val second = withTimeoutOrNull(viewConfiguration.doubleTapTimeoutMillis) {
-                                    awaitFirstDown(requireUnconsumed = false)
-                                }
-                                if (second != null && (second.position - down.position).getDistance() < slop * 4) {
-                                    if (currentSettings.haptics) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                                    cb()
+                            } else {
+                                // 何もない所のタップ（画面座標）。ダブルタップが割り当てられていれば 2 回目を待つ
+                                val rootPos = down.position + Offset(canvasPos[0], canvasPos[1])
+                                val cb = doubleTapCb
+                                if (cb != null) {
+                                    val second = withTimeoutOrNull(viewConfiguration.doubleTapTimeoutMillis) {
+                                        awaitFirstDown(requireUnconsumed = false)
+                                    }
+                                    if (second != null && (second.position - down.position).getDistance() < slop * 4) {
+                                        if (currentSettings.haptics) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                        cb()
+                                    } else {
+                                        tapEmptyCb?.invoke(rootPos)
+                                    }
+                                } else {
+                                    tapEmptyCb?.invoke(rootPos)
                                 }
                             }
                         }
