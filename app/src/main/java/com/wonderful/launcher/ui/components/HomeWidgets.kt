@@ -56,6 +56,10 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.composed
 import androidx.compose.runtime.rememberUpdatedState
 import kotlin.math.abs
+import kotlin.math.PI
+import kotlin.math.sin
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.positionChange
 import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.data.ClockStyle
@@ -193,10 +197,13 @@ fun CornerButton(
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.82f else 1f, spring(dampingRatio = s.jelly(0.3f), stiffness = 500f), label = "corner")
     val infinite = rememberInfiniteTransition(label = "float")
+    // 角度を 0→2π で回し続けて sin を取る（端で折り返さないので途中でカクッとならない）
+    val bobPeriod = (3200 / (s.animSpeed * s.cornerFloatSpeed).coerceAtLeast(0.05f)).toInt()
     val bob by infinite.animateFloat(
-        0f, 1f, infiniteRepeatable(tween((2600 / s.animSpeed).toInt(), easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        0f, (2 * PI).toFloat(), infiniteRepeatable(tween(bobPeriod, easing = LinearEasing), RepeatMode.Restart),
         label = "bob",
     )
+    val floatPx = with(LocalDensity.current) { (8.dp * s.cornerFloatAmount).toPx() }
     val glowPulse by infinite.animateFloat(
         0.4f, 1f, infiniteRepeatable(tween((1500 / s.animSpeed).toInt()), RepeatMode.Reverse), label = "glow",
     )
@@ -213,8 +220,7 @@ fun CornerButton(
     Column(
         modifier
             .graphicsLayer {
-                val wobble = if (s.cornerFloat) ((bob + phase) % 1f - 0.5f) * 10f else 0f
-                translationY = wobble
+                translationY = if (s.cornerFloat) sin(bob + phase * 2f * PI.toFloat()) * floatPx else 0f
                 scaleX = scale; scaleY = scale
                 alpha = s.cornerOpacity
             },

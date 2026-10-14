@@ -26,6 +26,7 @@ import com.wonderful.launcher.data.MatrixConfig
 import com.wonderful.launcher.data.MazeConfig
 import com.wonderful.launcher.data.MazeGenerator
 import com.wonderful.launcher.data.MazeSolver
+import com.wonderful.launcher.data.ScreenCorner
 import com.wonderful.launcher.data.StarfieldConfig
 import com.wonderful.launcher.data.UnderwaterConfig
 import com.wonderful.launcher.data.VaporConfig
@@ -205,6 +206,10 @@ private fun LifeSettings(c: LifeConfig, set: ((LifeConfig) -> LifeConfig) -> Uni
     SwitchSetting("ネオンの光", c.glow) { v -> set { it.copy(glow = v) } }
     SwitchSetting("マス目の線", c.gridLines) { v -> set { it.copy(gridLines = v) } }
     SwitchSetting("情報表示（世代・人口グラフ）", c.hud) { v -> set { it.copy(hud = v) } }
+    if (c.hud) {
+        ChoiceSetting("情報表示の位置", ScreenCorner.entries, c.hudCorner, { it.label }, "時計やドックと重なる時は位置や距離を変えてください") { v -> set { it.copy(hudCorner = v) } }
+        SliderSetting("端からの距離", c.hudMarginDp, 0f..400f, format = { "${it.toInt()}dp" }) { v -> set { it.copy(hudMarginDp = v) } }
+    }
 
     SectionHeader("ライフゲームの動き")
     SwitchSetting("タップでセルを置く", c.touch, "グライダーなどの模様がランダムに置かれる") { v -> set { it.copy(touch = v) } }

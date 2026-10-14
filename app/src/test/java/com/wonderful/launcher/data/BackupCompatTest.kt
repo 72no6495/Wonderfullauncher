@@ -137,6 +137,68 @@ class BackupCompatTest {
     }
 
     @Test
+    fun v4BackupKeepsWallpaperDetails() {
+        // backup_v4.json は v4（壁紙ごとの詳細設定追加版）のコードで書き出したもの
+        val d = BackupCodec.decode(fixture("backup_v4.json"))
+        val s = d.settings
+        assertEquals(WallpaperType.LIFE, s.wallpaperType)
+        assertEquals(LifeRule.HIGHLIFE, s.life.rule)
+        assertEquals(CellShape.ROUND, s.life.shape)
+        assertEquals(LifeColor.RAINBOW, s.life.color)
+        assertEquals(9f, s.life.cellDp, 0.001f)
+        assertEquals(MazeSolver.ASTAR, s.maze.solver)
+        assertEquals(33f, s.maze.cellDp, 0.001f)
+        assertEquals(0.8f, s.rubber, 0.001f)
+        assertEquals(TrailStyle.LINE, s.trailStyle)
+        assertEquals(WidgetKind.BATTERY, d.widgets.single().kind)
+        // その後に増えた項目は初期値（人口グラフは時計と重ならない左下へ）
+        assertEquals(ScreenCorner.BOTTOM_LEFT, s.life.hudCorner)
+        assertFalse(s.liteMode)
+        assertEquals(0, s.fpsLimit)
+        assertTrue(s.chargeAnim)
+        assertEquals(LauncherSettings().cornerFloatAmount, s.cornerFloatAmount, 0.0001f)
+    }
+
+    @Test
+    fun clockSwitchMigratesToTopSlot() {
+        // v4 までの「時計を表示」は、時計の位置に表示するものの選択へ
+        assertEquals(TopSlot.CLOCK, BackupCodec.decode(fixture("backup_v4.json")).settings.topSlot)
+        val off = BackupCodec.decode("""{"settings":{"showClock":false},"dataVersion":4}""")
+        assertEquals(TopSlot.NONE, off.settings.topSlot)
+        assertEquals(TopSlot.CLOCK, BackupCodec.decode("{}").settings.topSlot)
+    }
+
+    @Test
+    fun slotWidgetsRoundTripAndAreSanitized() {
+        val d = LauncherData(
+            topWidget = WidgetItem("t", WidgetKind.SYSMON, w = 8, h = 4),
+            gestureWidgets = mapOf(
+                "SWIPE_LEFT" to WidgetItem("g", WidgetKind.MEMORY, w = 99, h = 3),
+                "NO_SUCH_GESTURE" to WidgetItem("x", WidgetKind.CPU),
+            ),
+            settings = LauncherSettings(topSlot = TopSlot.CLOCK_AND_WIDGET),
+            dataVersion = Migration.CURRENT_VERSION,
+        )
+        val back = BackupCodec.decode(BackupCodec.encode(d))
+        assertEquals(TopSlot.CLOCK_AND_WIDGET, back.settings.topSlot)
+        assertEquals(WidgetKind.SYSMON, back.topWidget?.kind)
+        assertEquals(setOf("SWIPE_LEFT"), back.gestureWidgets.keys)
+        assertEquals(WIDGET_COLUMNS, back.gestureWidgets["SWIPE_LEFT"]?.w)
+        assertEquals(2, back.allWidgets().size)
+    }
+
+    @Test
+    fun liteModeOnlyAffectsRendering() {
+        val s = LauncherSettings(liteMode = true, dofBlur = 0.8f, trailLength = 0.5f, fpsLimit = 0)
+        val e = s.effective()
+        assertEquals(0f, e.dofBlur, 0f)
+        assertEquals(0f, e.trailLength, 0f)
+        assertEquals(30, e.fpsLimit)
+        // 保存される設定は変わらない
+        assertEquals(0.8f, BackupCodec.decode(BackupCodec.encode(LauncherData(settings = s))).settings.dofBlur, 0.001f)
+    }
+
+    @Test
     fun currentFormatRoundTrips() {
         val original = BackupCodec.decode(fixture("backup_v1.json")).copy(
             widgets = listOf(WidgetItem("w1", WidgetKind.NOTE, x = 2, y = 3, w = 4, h = 2, text = "メモ")),

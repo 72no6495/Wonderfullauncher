@@ -13,12 +13,30 @@ import com.wonderful.launcher.data.WallpaperType
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import android.os.SystemClock
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import com.wonderful.launcher.data.effective
+import kotlinx.coroutines.delay
+import com.wonderful.launcher.ui.wallpaper.ChargeEvent
+import com.wonderful.launcher.ui.wallpaper.ChargeListener
+import com.wonderful.launcher.ui.wallpaper.ChargingOverlay
+import com.wonderful.launcher.ui.wallpaper.batteryLevel
 import com.wonderful.launcher.data.GestureSlot
 import com.wonderful.launcher.data.actionFor
 import com.wonderful.launcher.ui.components.SwipeDir
 import com.wonderful.launcher.ui.components.swipeGestures
 import com.wonderful.launcher.ui.panels.AddSystemWidget
 import com.wonderful.launcher.ui.panels.WidgetPanel
+import com.wonderful.launcher.ui.panels.WidgetChooser
+import com.wonderful.launcher.ui.panels.WidgetPopup
+import com.wonderful.launcher.ui.panels.SlotWidget
+import com.wonderful.launcher.ui.panels.EmptySlot
+import com.wonderful.launcher.data.WidgetTarget
+import com.wonderful.launcher.data.showsClock
+import com.wonderful.launcher.data.showsTopWidget
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.EnterExitState
@@ -97,8 +115,19 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
     val menuApp by vm.menuApp.collectAsStateWithLifecycle()
     val recent by vm.recent.collectAsStateWithLifecycle()
     val badges by vm.badges.collectAsStateWithLifecycle()
-    val s = data.settings
+    // 描画には軽量モードを反映した設定を使う（保存されている設定はそのまま）
+    val s = data.settings.effective()
     val context = LocalContext.current
+
+    // しばらく触らなかったら動く壁紙と自動回転を止める（軽量化）
+    var lastTouch by remember { mutableLongStateOf(SystemClock.uptimeMillis()) }
+    var idle by remember { mutableStateOf(false) }
+    LaunchedEffect(s.idleSleepSec) {
+        while (true) {
+            idle = s.idleSleepSec > 0f && SystemClock.uptimeMillis() - lastTouch > (s.idleSleepSec * 1000).toLong()
+            delay(1000)
+        }
+    }
 
     RetroTheme(s) {
         val p = LocalPalette.current
@@ -107,6 +136,10 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
         // 最後に開いていたアプリメニューの対象（閉じるアニメーション中も表示するため）
         val lastMenuApp = remember { arrayOfNulls<AppInfo>(1) }
         if (menuApp != null) lastMenuApp[0] = menuApp
+
+        // ジェスチャーで出しているウィジェット / ウィジェットを選んでいる置き場所
+        var popupSlot by remember { mutableStateOf<GestureSlot?>(null) }
+        var chooserTarget by remember { mutableStateOf<WidgetTarget?>(null) }
 
         fun runGesture(slot: GestureSlot) {
             when (s.actionFor(slot)) {
@@ -129,6 +162,11 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                     else Toast.makeText(context, "設定 → ジェスチャー で起動するアプリを選んでください", Toast.LENGTH_SHORT).show()
                 }
                 GestureAction.ALARM -> SystemActions.openAlarms(context)
+                GestureAction.SHOW_WIDGET -> {
+                    // まだ選んでいなければ、その場で選ぶ画面を出す
+                    if (data.gestureWidgets[slot.name] != null) popupSlot = slot
+                    else chooserTarget = WidgetTarget.Gesture(slot.name)
+                }
                 GestureAction.CAMERA -> SystemActions.openCamera(context)
                 GestureAction.ASSISTANT -> SystemActions.openAssistant(context)
                 GestureAction.FLASHLIGHT -> SystemActions.toggleFlashlight(context)
@@ -142,6 +180,13 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             }
         }
 
+        // 充電アニメーション
+        var chargeEvent by remember { mutableStateOf<ChargeEvent?>(null) }
+        ChargeListener(s.chargeAnim) { e -> if (e.plugged || s.chargeOnUnplug) chargeEvent = e }
+        LaunchedEffect(vm) {
+            vm.chargePreview.collect { chargeEvent = ChargeEvent(true, batteryLevel(context)) }
+        }
+
         // ホーム画面でホームボタン
         val onHomeButton by rememberUpdatedState { runGesture(GestureSlot.HOME_BUTTON) }
         LaunchedEffect(vm) {
@@ -153,11 +198,29 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             vm.closePanel()
         }
 
-        BackHandler(enabled = panel != Panel.NONE || menuApp != null) {
-            if (menuApp != null) vm.showMenu(null) else vm.closePanel()
+        BackHandler(enabled = panel != Panel.NONE || menuApp != null || popupSlot != null || chooserTarget != null) {
+            when {
+                chooserTarget != null -> chooserTarget = null
+                popupSlot != null -> popupSlot = null
+                menuApp != null -> vm.showMenu(null)
+                else -> vm.closePanel()
+            }
         }
 
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    // 触れたことだけ記録して、タッチはそのまま下へ流す
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent(PointerEventPass.Initial)
+                            lastTouch = SystemClock.uptimeMillis()
+                            if (idle) idle = false
+                        }
+                    }
+                },
+        ) {
             val rootW = constraints.maxWidth.toFloat()
             val rootH = constraints.maxHeight.toFloat()
 
@@ -176,7 +239,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                         }
                     },
             ) {
-            WallpaperLayer(s, p, paused = panel != Panel.NONE)
+            WallpaperLayer(s, p, paused = panel != Panel.NONE || idle)
 
             // ── ホーム ──
             Column(Modifier.fillMaxSize().systemBarsPadding()) {
@@ -204,8 +267,19 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (s.showClock) {
-                        RetroClock(onClick = { runGesture(GestureSlot.CLOCK_TAP) })
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (s.showsClock) {
+                            RetroClock(onClick = { runGesture(GestureSlot.CLOCK_TAP) })
+                        }
+                        // 時計の位置のウィジェット
+                        if (s.showsTopWidget) {
+                            val top = data.topWidget
+                            val h = s.topWidgetHeightDp.dp
+                            Box(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+                                if (top != null) SlotWidget(top, vm, h, onAddSystemWidget)
+                                else EmptySlot(h, { chooserTarget = WidgetTarget.Top })
+                            }
+                        }
                     }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -215,7 +289,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                         settings = s,
                         palette = p,
                         // 設定画面は半透明なので、後ろの球体で変更をその場で確認できるよう止めない
-                        paused = panel != Panel.NONE && panel != Panel.SETTINGS,
+                        paused = (panel != Panel.NONE && panel != Panel.SETTINGS) || idle,
                         spinRequests = spinRequests,
                         resetRequests = resetRequests,
                         badges = badges,
@@ -330,10 +404,66 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             PanelHost(panel == Panel.SETTINGS, s, origin) {
                 SettingsPanel(
                     data, apps, icons, vm,
+                    onAddSystemWidget = onAddSystemWidget,
                     onResetSphere = { resetRequests++ },
                     onClose = { vm.closePanel() },
                     modifier = Modifier.fillMaxSize(),
                 )
+            }
+
+            // ── ジェスチャーで呼び出したウィジェット ──
+            val lastPopup = remember { arrayOfNulls<GestureSlot>(1) }
+            if (popupSlot != null) lastPopup[0] = popupSlot
+            AnimatedVisibility(
+                popupSlot != null,
+                enter = fadeIn(tween(180)), exit = fadeOut(tween(220)),
+            ) {
+                Box(Modifier.fillMaxSize()) { Scrim { popupSlot = null } }
+            }
+            AnimatedVisibility(
+                visible = popupSlot != null,
+                enter = scaleIn(spring(dampingRatio = 0.6f, stiffness = 420f), initialScale = 0.5f) + fadeIn(tween(150)),
+                exit = scaleOut(tween(180), targetScale = 0.85f) + fadeOut(tween(180)),
+                modifier = Modifier.align(Alignment.Center),
+            ) {
+                val slot = lastPopup[0]
+                val item = slot?.let { data.gestureWidgets[it.name] }
+                if (slot != null && item != null) {
+                    WidgetPopup(
+                        item = item,
+                        title = "WIDGET.EXE",
+                        rows = s.popupWidgetRows,
+                        vm = vm,
+                        onAddSystem = onAddSystemWidget,
+                        onChange = { popupSlot = null; chooserTarget = WidgetTarget.Gesture(slot.name) },
+                        onClose = { popupSlot = null },
+                        modifier = Modifier.systemBarsPadding().padding(16.dp),
+                    )
+                }
+            }
+
+            // ── ウィジェットを選ぶ画面（時計の位置・ジェスチャー） ──
+            val lastChooser = remember { arrayOfNulls<WidgetTarget>(1) }
+            if (chooserTarget != null) lastChooser[0] = chooserTarget
+            PanelHost(chooserTarget != null, s, TransformOrigin.Center) {
+                val target = lastChooser[0]
+                if (target != null) {
+                    WidgetChooser(
+                        title = when (target) {
+                            WidgetTarget.Top -> "時計の位置に表示するウィジェット"
+                            is WidgetTarget.Gesture -> {
+                                val label = GestureSlot.entries.firstOrNull { it.name == target.slot }?.label ?: ""
+                                "「$label」で表示するウィジェット"
+                            }
+                            else -> "ウィジェットを選ぶ"
+                        },
+                        target = target,
+                        vm = vm,
+                        onAddSystem = onAddSystemWidget,
+                        onClose = { chooserTarget = null },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
 
             // ── アプリメニュー ──
@@ -352,7 +482,8 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                 }
             }
 
-            ScreenEffects(s, p, paused = false)
+            ScreenEffects(s, p, paused = idle)
+            ChargingOverlay(chargeEvent, s, p) { chargeEvent = null }
             CrtOverlay(s)
         }
     }

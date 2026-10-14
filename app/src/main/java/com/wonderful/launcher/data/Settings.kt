@@ -212,6 +212,10 @@ data class LifeConfig(
     val glow: Boolean = true,
     val gridLines: Boolean = false,
     val hud: Boolean = true,
+    /** 情報表示の位置（時計と重ならないよう変えられる） */
+    val hudCorner: ScreenCorner = ScreenCorner.BOTTOM_LEFT,
+    /** 端からの距離（dp） */
+    val hudMarginDp: Float = 130f,
     val seed: LifeSeed = LifeSeed.RANDOM,
     val autoReseed: Boolean = true,
     val maxGenerations: Int = 600,
@@ -219,6 +223,30 @@ data class LifeConfig(
     /** 何もない所をタップするとセルを置ける */
     val touch: Boolean = true,
 )
+
+/** 画面上部（時計の位置）に表示するもの */
+enum class TopSlot(val label: String) {
+    CLOCK("時計"),
+    WIDGET("ウィジェット"),
+    CLOCK_AND_WIDGET("時計＋ウィジェット"),
+    NONE("なし"),
+}
+
+/** 画面上の表示位置 */
+enum class ScreenCorner(val label: String) {
+    TOP_LEFT("左上"),
+    TOP_RIGHT("右上"),
+    BOTTOM_LEFT("左下"),
+    BOTTOM_RIGHT("右下"),
+}
+
+/** 充電を始めた時のアニメーション */
+enum class ChargeStyle(val label: String) {
+    BATTERY("ネオン電池"),
+    RING("リング"),
+    LIGHTNING("稲妻"),
+    WAVE("液体"),
+}
 
 /** アイコンをタップした時の動き */
 enum class TapEffect(val label: String) {
@@ -266,6 +294,7 @@ enum class GestureAction(val label: String, val needsAccessibility: Boolean = fa
     SPIN_SPHERE("スピン"),
     LAUNCH_APP("アプリ起動"),
     ALARM("アラーム"),
+    SHOW_WIDGET("ウィジェット表示"),
     CAMERA("カメラ"),
     ASSISTANT("アシスタント"),
     FLASHLIGHT("ライト"),
@@ -296,6 +325,13 @@ enum class WidgetKind(val label: String) {
     CLOCK("レトロ時計"),
     BATTERY("バッテリー"),
     NOTE("メモ"),
+    MEMORY("メモリ"),
+    CPU("CPU"),
+    TEMPERATURE("温度"),
+    STORAGE("ストレージ"),
+    NETWORK("通信速度"),
+    BOOST("メモリ解放"),
+    SYSMON("システムモニター"),
 }
 
 enum class PalettePreset(val label: String) {
@@ -379,6 +415,8 @@ data class LauncherSettings(
     val cornerSpread: Float = 1f,
     val cornerLabels: Boolean = true,
     val cornerFloat: Boolean = true,
+    val cornerFloatAmount: Float = 0.5f,
+    val cornerFloatSpeed: Float = 1f,
     val cornerGlow: Boolean = true,
 
     // ── 見た目 ──
@@ -419,7 +457,13 @@ data class LauncherSettings(
     val gradientAnimate: Boolean = true,
 
     // ── 時計 ──
-    val showClock: Boolean = true,
+    val showClock: Boolean = true, // v4 までの項目。v5 からは topSlot
+    /** 時計の位置に表示するもの */
+    val topSlot: TopSlot = TopSlot.CLOCK,
+    /** 時計の位置のウィジェットの高さ */
+    val topWidgetHeightDp: Float = 150f,
+    /** ジェスチャーで出すウィジェットの高さ（グリッドのマス数） */
+    val popupWidgetRows: Int = 5,
     val clock24h: Boolean = true,
     val showSeconds: Boolean = false,
     val showDate: Boolean = true,
@@ -498,6 +542,21 @@ data class LauncherSettings(
     val vhsTracking: Boolean = false,
     val glitchOverlay: Boolean = false,
 
+    // ── 充電アニメーション ──
+    val chargeAnim: Boolean = true,
+    val chargeStyle: ChargeStyle = ChargeStyle.BATTERY,
+    val chargeDurationSec: Float = 3.5f,
+    val chargeOnUnplug: Boolean = false,
+    val chargeHaptic: Boolean = true,
+
+    // ── 軽量化 ──
+    /** ぼかし・残像・粒・画面エフェクトなど重い演出をまとめて止める */
+    val liteMode: Boolean = false,
+    /** 描画の最大フレームレート（0 = 制限なし） */
+    val fpsLimit: Int = 0,
+    /** 何秒操作しないと動く壁紙と自動回転を止めるか（0 = 止めない） */
+    val idleSleepSec: Float = 0f,
+
     // ── ウィジェット画面 ──
     val widgetFrame: Boolean = true,
     val widgetGrid: Boolean = true,
@@ -552,6 +611,10 @@ data class LauncherData(
     val recent: List<RecentEntry> = emptyList(),
     val launchCounts: Map<String, Int> = emptyMap(),
     val widgets: List<WidgetItem> = emptyList(),
+    /** 時計の位置に表示するウィジェット */
+    val topWidget: WidgetItem? = null,
+    /** ジェスチャーで呼び出すウィジェット（GestureSlot 名 → ウィジェット） */
+    val gestureWidgets: Map<String, WidgetItem> = emptyMap(),
     /**
      * 保存形式のバージョン。v1（最初のリリース）にはこの項目が無いので、
      * 読み込み時に無ければ 1 として扱いマイグレーションする。

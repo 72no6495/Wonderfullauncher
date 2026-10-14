@@ -15,13 +15,14 @@ import kotlinx.serialization.json.jsonObject
 object Migration {
 
     /** 現在の保存形式バージョン */
-    const val CURRENT_VERSION = 4
+    const val CURRENT_VERSION = 5
 
     fun migrate(input: LauncherData): LauncherData {
         var d = input
         if (d.dataVersion < 2) d = v1ToV2(d)
         if (d.dataVersion < 3) d = v2ToV3(d)
         if (d.dataVersion < 4) d = v3ToV4(d)
+        if (d.dataVersion < 5) d = v4ToV5(d)
         return sanitize(d.copy(dataVersion = maxOf(d.dataVersion, CURRENT_VERSION)))
     }
 
@@ -62,6 +63,15 @@ object Migration {
             ),
             dataVersion = 4,
         )
+    }
+
+    /**
+     * v4 → v5
+     * - 「時計を表示」の ON/OFF を、時計の位置に表示するものの選択に置き換え
+     */
+    private fun v4ToV5(d: LauncherData): LauncherData {
+        val s = d.settings
+        return d.copy(settings = s.copy(topSlot = if (s.showClock) TopSlot.CLOCK else TopSlot.NONE), dataVersion = 5)
     }
 
     /**
@@ -108,7 +118,15 @@ object Migration {
                 stepMs = s.life.stepMs.finiteIn(16f, 2000f, 110f),
                 density = s.life.density.finiteIn(0.01f, 0.95f, 0.28f),
                 maxGenerations = s.life.maxGenerations.coerceIn(50, 100000),
+                hudMarginDp = s.life.hudMarginDp.finiteIn(0f, 400f, 130f),
             ),
+            cornerFloatAmount = s.cornerFloatAmount.finiteIn(0f, 1f, 0.5f),
+            cornerFloatSpeed = s.cornerFloatSpeed.finiteIn(0.2f, 3f, 1f),
+            chargeDurationSec = s.chargeDurationSec.finiteIn(1f, 10f, 3.5f),
+            fpsLimit = if (s.fpsLimit in listOf(0, 15, 20, 30, 45, 60)) s.fpsLimit else 0,
+            idleSleepSec = s.idleSleepSec.finiteIn(0f, 600f, 0f),
+            topWidgetHeightDp = s.topWidgetHeightDp.finiteIn(60f, 500f, 150f),
+            popupWidgetRows = s.popupWidgetRows.coerceIn(2, 14),
             matrix = s.matrix.copy(charSizeDp = s.matrix.charSizeDp.finiteIn(8f, 48f, 18f)),
             starfield = s.starfield.copy(count = s.starfield.count.coerceIn(10, 1500)),
             underwater = s.underwater.copy(bubbles = s.underwater.bubbles.coerceIn(0, 300), fish = s.underwater.fish.coerceIn(0, 40)),
@@ -118,22 +136,25 @@ object Migration {
         )
         if (!settingsReachable(s)) s = s.copy(longPressAction = GestureAction.SETTINGS)
 
-        val widgets = d.widgets
-            .distinctBy { it.id }
-            .map { w ->
-                val ww = w.w.coerceIn(1, WIDGET_COLUMNS)
-                w.copy(
-                    w = ww,
-                    h = w.h.coerceIn(1, 24),
-                    x = w.x.coerceIn(0, WIDGET_COLUMNS - ww),
-                    y = w.y.coerceAtLeast(0),
-                )
-            }
+        fun fix(w: WidgetItem): WidgetItem {
+            val ww = w.w.coerceIn(1, WIDGET_COLUMNS)
+            return w.copy(
+                w = ww,
+                h = w.h.coerceIn(1, 24),
+                x = w.x.coerceIn(0, WIDGET_COLUMNS - ww),
+                y = w.y.coerceAtLeast(0),
+            )
+        }
+        val widgets = d.widgets.distinctBy { it.id }.map(::fix)
         return d.copy(
             settings = s,
             sphereApps = d.sphereApps.distinct(),
             dockApps = d.dockApps.distinct(),
             widgets = widgets,
+            topWidget = d.topWidget?.let(::fix),
+            gestureWidgets = d.gestureWidgets
+                .filterKeys { k -> GestureSlot.entries.any { it.name == k } }
+                .mapValues { fix(it.value) },
         )
     }
 
@@ -237,4 +258,52 @@ object BackupCodec {
 
     private fun <T> readable(serializer: kotlinx.serialization.KSerializer<T>, element: JsonElement): Boolean =
         runCatching { json.decodeFromJsonElement(serializer, element) }.isSuccess
+}
+
+/**
+ * 実際の描画に使う設定。軽量モードの時は重い演出をまとめて OFF にする
+ * （保存されている設定そのものは変えないので、軽量モードを切ると元に戻る）。
+ */
+fun LauncherSettings.effective(): LauncherSettings = if (!liteMode) this else copy(
+    dofBlur = 0f,
+    panelBlur = false,
+    wallpaperBlur = 0f,
+    trailLength = 0f,
+    tapParticles = false,
+    rainbowGlow = false,
+    glowPulse = false,
+    iconFloat = 0f,
+    filmGrain = 0f,
+    vhsTracking = false,
+    glitchOverlay = false,
+    cornerFloat = false,
+    fpsLimit = if (fpsLimit == 0 || fpsLimit > 30) 30 else fpsLimit,
+)
+
+/** ウィジェット画面・時計の位置・ジェスチャー用のすべてのウィジェット */
+fun LauncherData.allWidgets(): List<WidgetItem> = widgets + listOfNotNull(topWidget) + gestureWidgets.values
+
+/** すべてのウィジェットに同じ変換をかける */
+fun LauncherData.mapAllWidgets(f: (WidgetItem) -> WidgetItem): LauncherData = copy(
+    widgets = widgets.map(f),
+    topWidget = topWidget?.let(f),
+    gestureWidgets = gestureWidgets.mapValues { f(it.value) },
+)
+
+/** 時計の位置に時計を出すか */
+val LauncherSettings.showsClock: Boolean get() = topSlot == TopSlot.CLOCK || topSlot == TopSlot.CLOCK_AND_WIDGET
+
+/** 時計の位置にウィジェットを出すか */
+val LauncherSettings.showsTopWidget: Boolean get() = topSlot == TopSlot.WIDGET || topSlot == TopSlot.CLOCK_AND_WIDGET
+
+/** ウィジェットを置く先 */
+sealed interface WidgetTarget {
+    /** ウィジェット画面 */
+    data object Board : WidgetTarget
+    /** 時計の位置 */
+    data object Top : WidgetTarget
+    /** ジェスチャーで呼び出す */
+    data class Gesture(val slot: String) : WidgetTarget
+    /** 既存のウィジェットを作り直す（復元後の再設定） */
+    data class Replace(val itemId: String) : WidgetTarget
 }
