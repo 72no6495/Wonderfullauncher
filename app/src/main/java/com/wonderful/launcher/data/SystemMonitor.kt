@@ -138,17 +138,27 @@ object SystemMonitor {
         }
     }
 
+    /**
+     * CPU の温度センサーのファイル。最初に 1 回だけ探して覚えておく
+     * （以前は毎秒すべてのセンサーを読み直していた）。
+     */
+    private val cpuTempFiles: List<File> by lazy {
+        runCatching {
+            val zones = File("/sys/class/thermal").listFiles { f -> f.name.startsWith("thermal_zone") } ?: return@runCatching emptyList()
+            zones.filter { z ->
+                val type = runCatching { File(z, "type").readText().trim().lowercase() }.getOrNull() ?: return@filter false
+                (type.contains("cpu") || type.contains("tsens") || type.contains("soc") || type.contains("ap")) &&
+                    readLong(File(z, "temp").path) != null
+            }.map { File(it, "temp") }.take(8)
+        }.getOrDefault(emptyList())
+    }
+
     /** CPU の温度（読める端末だけ）。℃ */
-    private fun readCpuTemp(): Float? = runCatching {
-        val zones = File("/sys/class/thermal").listFiles { f -> f.name.startsWith("thermal_zone") } ?: return null
-        zones.mapNotNull { z ->
-            val type = runCatching { File(z, "type").readText().trim().lowercase() }.getOrNull() ?: return@mapNotNull null
-            if (!(type.contains("cpu") || type.contains("tsens") || type.contains("soc") || type.contains("ap"))) return@mapNotNull null
-            val raw = readLong(File(z, "temp").path) ?: return@mapNotNull null
-            val c = if (raw > 1000) raw / 1000f else raw.toFloat()
-            c.takeIf { it in 5f..130f }
-        }.maxOrNull()
-    }.getOrNull()
+    private fun readCpuTemp(): Float? = cpuTempFiles.mapNotNull { f ->
+        val raw = readLong(f.path) ?: return@mapNotNull null
+        val c = if (raw > 1000) raw / 1000f else raw.toFloat()
+        c.takeIf { it in 5f..130f }
+    }.maxOrNull()
 
     fun thermalLabel(status: Int?): String = when (status) {
         null -> "-"

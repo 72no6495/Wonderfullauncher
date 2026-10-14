@@ -442,6 +442,48 @@ private fun ChargeTab(s: LauncherSettings, u: Update, vm: LauncherViewModel) {
 @Composable
 private fun PerformanceTab(s: LauncherSettings, u: Update) {
     val p = LocalPalette.current
+
+    // いま有効になっている重めの設定（スマホが熱い時の目安）
+    val heavy = buildList {
+        if (s.fpsLimit == 0 || s.fpsLimit > 60) add("フレームレート制限なし（画面の最大まで描画）")
+        if (s.wallpaperType.animated && !(s.wallpaperType == WallpaperType.GRADIENT && !s.gradientAnimate)) add("動く壁紙（${s.wallpaperType.label}）")
+        if (s.dofBlur > 0f) add("奥のアイコンのぼかし")
+        if (s.wallpaperBlur > 0f) add("壁紙のぼかし")
+        if (s.autoRotate) add("球体の自動回転（常に描き直し）")
+        if (s.trailLength > 0f) add("残像")
+        if (s.rainbowGlow || s.glowPulse) add("虹色グロー / 明滅")
+        if (s.iconFloat > 0f) add("アイコンの浮遊")
+        if (s.filmGrain > 0f || s.vhsTracking || s.glitchOverlay) add("画面全体のエフェクト")
+        if (s.idleSleepSec <= 0f) add("放置しても動き続ける")
+    }
+    SectionHeader("負荷チェック")
+    if (s.liteMode) {
+        RetroLabel("軽量モード中です（重い演出は止まっています）", size = 12.sp, color = p.mint, maxLines = 2)
+    } else if (heavy.isEmpty()) {
+        RetroLabel("重い設定はありません ✓", size = 12.sp, color = p.mint)
+    } else {
+        RetroLabel("スマホが熱くなる時は、次の設定が原因になりやすいです:", size = 12.sp, color = p.yellow, maxLines = 2)
+        heavy.forEach { RetroLabel("・$it", size = 12.sp, maxLines = 2) }
+    }
+    Spacer(Modifier.height(8.dp))
+    RetroButton(
+        "おすすめの省エネ設定にする",
+        {
+            u {
+                it.copy(
+                    fpsLimit = 30, idleSleepSec = 30f, dofBlur = 0f, wallpaperBlur = 0f,
+                    trailLength = 0f, rainbowGlow = false, glowPulse = false, iconFloat = 0f,
+                    filmGrain = 0f, vhsTracking = false, glitchOverlay = false,
+                )
+            }
+        },
+        Modifier.fillMaxWidth(), color = p.mint, filled = true,
+    )
+    RetroLabel(
+        "30fps・30秒放置で停止・ぼかし/残像/画面エフェクトOFF（壁紙と球体の見た目はそのまま）",
+        size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 3,
+    )
+
     SectionHeader("軽量モード")
     SwitchSetting(
         "軽量モード", s.liteMode,
@@ -452,7 +494,7 @@ private fun PerformanceTab(s: LauncherSettings, u: Update) {
     ChoiceSetting(
         "最大フレームレート", listOf(0, 60, 45, 30, 20, 15), s.fpsLimit,
         { if (it == 0) "制限なし" else "${it}fps" },
-        "下げるほど電池と発熱が楽になります（球体・壁紙・エフェクトのアニメーション）",
+        "下げるほど電池と発熱が楽になります。「制限なし」は画面の最大（120〜144Hz の端末ではかなり熱くなります）",
     ) { v -> u { it.copy(fpsLimit = v) } }
 
     SectionHeader("放置したら止める")
@@ -900,7 +942,8 @@ private fun AppsTab(data: LauncherData, apps: List<AppInfo>, icons: Map<String, 
         Column(Modifier.padding(12.dp)) {
             RetroTextField(query, { query = it }, "アプリを絞り込み…", Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                RetroButton("おすすめ", { vm.resetSphereToRecommended() }, color = p.cyan)
                 RetroButton("全部入れる", { vm.addAllToSphere() }, color = p.mint)
                 RetroButton("全部外す", { vm.clearSphere() }, color = p.pink)
                 RetroLabel("${sphere.size}/${apps.size}", color = p.yellow, size = 12.sp)

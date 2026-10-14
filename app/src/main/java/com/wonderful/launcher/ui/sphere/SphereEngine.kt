@@ -97,6 +97,18 @@ class SphereEngine {
         }
     }
 
+    /**
+     * 何もしていない時に、あと何秒で自動回転が始まるか。
+     * 自動回転しない設定なら null（触られるまで眠ってよい）。
+     */
+    fun secondsUntilAutoRotate(s: LauncherSettings): Float? =
+        if (!s.autoRotate || touching) null else (s.autoRotateResumeSec - idleTime).coerceAtLeast(0f)
+
+    /** 眠っていた時間を待ち時間に足す（フレームを回さずに自動回転の再開を待つため） */
+    fun addIdle(seconds: Float) {
+        if (!touching) idleTime += seconds
+    }
+
     fun touchDown() {
         touching = true
         velX = 0f; velY = 0f

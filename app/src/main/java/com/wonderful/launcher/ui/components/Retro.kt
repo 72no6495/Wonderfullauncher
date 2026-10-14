@@ -75,6 +75,8 @@ import com.wonderful.launcher.ui.theme.LocalPalette
 import com.wonderful.launcher.ui.theme.LocalRetroFont
 import com.wonderful.launcher.ui.theme.LocalSettings
 import com.wonderful.launcher.ui.theme.jelly
+import com.wonderful.launcher.ui.theme.LocalAnimTime
+import com.wonderful.launcher.ui.theme.wave
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -163,11 +165,7 @@ fun RetroWindow(
 ) {
     val p = LocalPalette.current
     val s = LocalSettings.current
-    val shift by rememberInfiniteTransition(label = "title").animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween((4000 / s.animSpeed).toInt(), easing = LinearEasing), RepeatMode.Reverse),
-        label = "shift",
-    )
+    val anim = LocalAnimTime.current
     val shape = RoundedCornerShape(if (s.windowChrome) 4.dp else 18.dp)
     Column(
         modifier
@@ -179,6 +177,7 @@ fun RetroWindow(
             Modifier
                 .fillMaxWidth()
                 .drawBehind {
+                    val shift = anim.wave(8f)
                     val w = size.width
                     drawRect(
                         Brush.horizontalGradient(
@@ -281,9 +280,7 @@ fun RetroTextField(
 ) {
     val p = LocalPalette.current
     val font = LocalRetroFont.current
-    val blink by rememberInfiniteTransition(label = "caret").animateFloat(
-        0f, 1f, infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "blink",
-    )
+    val anim = LocalAnimTime.current
     Row(
         modifier
             .clip(RoundedCornerShape(6.dp))
@@ -292,7 +289,7 @@ fun RetroTextField(
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RetroLabel(leading, color = p.pink.copy(alpha = 0.5f + blink * 0.5f), size = 15.sp)
+        RetroLabel(leading, color = p.pink, size = 15.sp, modifier = Modifier.graphicsLayer { alpha = 0.5f + 0.5f * anim.wave(1.2f) })
         Spacer(Modifier.width(8.dp))
         Box(Modifier.weight(1f)) {
             if (value.isEmpty()) RetroLabel(placeholder, color = p.text.copy(alpha = 0.4f), size = 15.sp)
@@ -511,11 +508,12 @@ fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun EmptyMessage(text: String, modifier: Modifier = Modifier) {
     val p = LocalPalette.current
-    val a by rememberInfiniteTransition(label = "empty").animateFloat(
-        0.4f, 1f, infiniteRepeatable(tween(1200, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "a",
-    )
+    val anim = LocalAnimTime.current
     Box(modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-        RetroLabel(text, color = p.text.copy(alpha = a), align = TextAlign.Center, maxLines = 4)
+        RetroLabel(
+            text, color = p.text, align = TextAlign.Center, maxLines = 4,
+            modifier = Modifier.graphicsLayer { alpha = 0.4f + 0.6f * anim.wave(2.4f) },
+        )
     }
 }
 

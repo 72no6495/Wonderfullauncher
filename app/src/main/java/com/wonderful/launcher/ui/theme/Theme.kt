@@ -6,6 +6,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import com.wonderful.launcher.data.FontStyle
@@ -100,6 +110,45 @@ val LocalRetroFont = staticCompositionLocalOf<FontFamily> { FontFamily.Monospace
 
 /** 描画の最大フレームレート（0 = 制限なし）。軽量化の設定から */
 val LocalFpsLimit = staticCompositionLocalOf { 0 }
+
+/**
+ * 飾りのアニメーション（ボタンの浮遊・時計の明滅・ウィンドウのタイトルなど）が共有する時計（秒）。
+ * 1 本だけ動かし、最大 30fps・放置中は止める。値は描画の時に読むこと（再コンポーズを起こさないため）。
+ */
+val LocalAnimTime = staticCompositionLocalOf<State<Float>> { mutableFloatStateOf(0f) }
+
+/**
+ * 経過時間（秒）を返す時計。[paused] の間はフレームを要求しない。
+ * [maxFps] が 0 なら画面の更新ごと。
+ */
+@Composable
+fun rememberTicker(speed: Float, paused: Boolean, maxFps: Int): State<Float> {
+    val time = remember { mutableFloatStateOf(0f) }
+    val currentSpeed by rememberUpdatedState(speed)
+    val currentPaused by rememberUpdatedState(paused)
+    val fps by rememberUpdatedState(maxFps)
+    LaunchedEffect(Unit) {
+        val gate = FrameGate()
+        var last = withFrameNanos { it }
+        while (isActive) {
+            if (currentPaused) {
+                snapshotFlow { currentPaused }.first { !it }
+                last = withFrameNanos { it }
+                continue
+            }
+            withFrameNanos { now ->
+                val dt = ((now - last) / 1_000_000_000f).coerceIn(0f, 0.1f)
+                last = now
+                if (gate.add(dt, fps)) time.floatValue += gate.consume() * currentSpeed
+            }
+        }
+    }
+    return time
+}
+
+/** 0〜1 をなめらかに往復する値（周期 [period] 秒） */
+fun State<Float>.wave(period: Float, phase: Float = 0f): Float =
+    0.5f + 0.5f * kotlin.math.sin((value / period + phase) * 2f * kotlin.math.PI.toFloat())
 
 /**
  * フレームレート制限。毎フレーム dt を足していき、1 コマぶん貯まったら true を返す。

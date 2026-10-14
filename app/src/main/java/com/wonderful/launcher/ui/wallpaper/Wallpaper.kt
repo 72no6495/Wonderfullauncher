@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -37,6 +38,7 @@ import com.wonderful.launcher.data.WallpaperType
 import com.wonderful.launcher.ui.theme.RetroPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
@@ -45,7 +47,8 @@ import kotlin.random.Random
 @Composable
 fun WallpaperLayer(settings: LauncherSettings, palette: RetroPalette, paused: Boolean) {
     Crossfade(targetState = settings.wallpaperType, animationSpec = tween(600), label = "wp") { type ->
-        Box(Modifier.fillMaxSize()) {
+        // 専用のレイヤー（動く壁紙を描き直しても他を巻き込まない）
+        Box(Modifier.fillMaxSize().graphicsLayer()) {
             val blurMod = if (settings.wallpaperBlur > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 Modifier.blur((settings.wallpaperBlur * 24f).dp)
             } else Modifier
@@ -53,7 +56,7 @@ fun WallpaperLayer(settings: LauncherSettings, palette: RetroPalette, paused: Bo
                 WallpaperType.VAPOR_GRID -> VaporScene(settings, palette, paused, Modifier.fillMaxSize().then(blurMod))
                 WallpaperType.SYSTEM -> Unit // ウィンドウ背景に OS の壁紙が透けて見える
                 WallpaperType.IMAGE -> ImageWallpaper(settings.wallpaperImageVersion, Modifier.fillMaxSize().then(blurMod))
-                WallpaperType.GRADIENT -> GradientWallpaper(settings, palette, Modifier.fillMaxSize())
+                WallpaperType.GRADIENT -> GradientWallpaper(settings, palette, paused, Modifier.fillMaxSize())
                 WallpaperType.SOLID -> Box(Modifier.fillMaxSize().background(Color(settings.solidColor)))
                 WallpaperType.UNDERWATER -> UnderwaterScene(settings, palette, paused, blurMod)
                 WallpaperType.MAZE -> MazeScene(settings, palette, paused, blurMod)
@@ -86,13 +89,12 @@ private fun ImageWallpaper(version: Long, modifier: Modifier) {
 }
 
 @Composable
-private fun GradientWallpaper(s: LauncherSettings, p: RetroPalette, modifier: Modifier) {
-    val t by rememberInfiniteTransition(label = "grad").animateFloat(
-        0f, 1f, infiniteRepeatable(tween((12000 / s.animSpeed).toInt(), easing = LinearEasing), RepeatMode.Reverse),
-        label = "t",
-    )
+private fun GradientWallpaper(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: Modifier) {
+    // 回さない設定なら時計そのものを止める（1 枚描いたら描き直さない）
+    val time = rememberSceneTime(s.animSpeed, paused || !s.gradientAnimate)
     Canvas(modifier) {
-        val a = Math.toRadians((s.gradientAngle + (if (s.gradientAnimate) t * 40f else 0f)).toDouble())
+        val t = if (s.gradientAnimate) 0.5f + 0.5f * sin(time.value * 2f * PI.toFloat() / 24f) else 0f
+        val a = Math.toRadians((s.gradientAngle + t * 40f).toDouble())
         val r = size.maxDimension
         val c = Offset(size.width / 2, size.height / 2)
         val d = Offset((cos(a) * r).toFloat(), (sin(a) * r).toFloat())
@@ -105,23 +107,13 @@ private fun GradientWallpaper(s: LauncherSettings, p: RetroPalette, modifier: Mo
  */
 @Composable
 fun VaporScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: Modifier = Modifier) {
-    val infinite = rememberInfiniteTransition(label = "vapor")
-    val gridPhase by infinite.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween((2200 / (s.gridSpeed * s.animSpeed).coerceAtLeast(0.05f)).toInt(), easing = LinearEasing)),
-        label = "grid",
-    )
-    val twinkle by infinite.animateFloat(
-        0f, (2 * Math.PI).toFloat(),
-        infiniteRepeatable(tween((6000 / s.animSpeed).toInt(), easing = LinearEasing)),
-        label = "twinkle",
-    )
+    // 時間は描画の時にだけ読む（以前は毎フレーム画面全体を作り直していた）
+    val time = rememberSceneTime(s.animSpeed, paused)
     val v = s.vapor
     val stars = remember(v.starCount) {
         val r = Random(42)
         List(v.starCount) { Triple(r.nextFloat(), r.nextFloat() * 0.95f, r.nextFloat()) }
     }
-    val phase = if (paused) 0f else gridPhase
 
     Box(
         modifier.drawWithCache {
@@ -146,10 +138,12 @@ fun VaporScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: 
                 close()
             }
             onDrawBehind {
+                // グリッドが流れる位置（2.2 秒で 1 マス）
+                val phase = (time.value * s.gridSpeed / 2.2f) % 1f
                 drawRect(sky, size = Size(w, horizon))
                 if (s.showStars) {
                     stars.forEachIndexed { i, (sx, sy, tw) ->
-                        val a = 0.35f + 0.65f * ((sin(twinkle + tw * 12f) + 1f) / 2f)
+                        val a = 0.35f + 0.65f * ((sin(time.value * 2f * PI.toFloat() / 6f + tw * 12f) + 1f) / 2f)
                         drawCircle(if (i % 3 == 0) p.cyan else Color.White, 1.2f + tw * 1.6f, Offset(sx * w, sy * horizon * 0.95f), alpha = a * 0.9f)
                     }
                 }
@@ -218,7 +212,8 @@ fun VaporScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: 
 fun CrtOverlay(settings: LauncherSettings, modifier: Modifier = Modifier) {
     if (!settings.scanlines && !settings.vignette) return
     Box(
-        modifier.fillMaxSize().drawWithCache {
+        // 専用のレイヤーで 1 回だけ描く（走査線 800 本を毎フレーム描き直さない）
+        modifier.fillMaxSize().graphicsLayer().drawWithCache {
             val step = 3.dp.toPx()
             val vignette = Brush.radialGradient(
                 listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = 0.55f)),

@@ -43,10 +43,14 @@ import com.wonderful.launcher.data.MazeGenerator
 import com.wonderful.launcher.data.MazeSolver
 import com.wonderful.launcher.data.ScreenCorner
 import com.wonderful.launcher.ui.theme.FrameGate
+import com.wonderful.launcher.ui.theme.rememberTicker
 import com.wonderful.launcher.ui.theme.LocalFpsLimit
 import com.wonderful.launcher.ui.theme.RetroPalette
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.snapshotFlow
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -60,25 +64,8 @@ import kotlin.random.Random
  * 背景アニメーション用の経過時間（秒）。速度設定を掛け、パネル表示中などは止める。
  */
 @Composable
-fun rememberSceneTime(speed: Float, paused: Boolean): State<Float> {
-    val time = remember { mutableFloatStateOf(0f) }
-    val currentSpeed by rememberUpdatedState(speed)
-    val currentPaused by rememberUpdatedState(paused)
-    val fps by rememberUpdatedState(LocalFpsLimit.current)
-    val gate = remember { FrameGate() }
-    LaunchedEffect(Unit) {
-        var last = withFrameNanos { it }
-        while (isActive) {
-            withFrameNanos { now ->
-                val dt = ((now - last) / 1_000_000_000f).coerceIn(0f, 0.1f)
-                last = now
-                // 状態を更新した時だけ再描画されるので、ここで間引けばフレームレートが下がる
-                if (!currentPaused && gate.add(dt, fps)) time.floatValue += gate.consume() * currentSpeed
-            }
-        }
-    }
-    return time
-}
+fun rememberSceneTime(speed: Float, paused: Boolean): State<Float> =
+    rememberTicker(speed, paused, LocalFpsLimit.current)
 
 /** ホーム画面の何もない所をタップした位置（画面座標）。触れる壁紙が受け取る */
 object WallpaperTouch {
@@ -465,10 +452,22 @@ fun MazeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
             val gate = FrameGate()
             var last = withFrameNanos { it }
             while (isActive) {
+                if (isPaused) {
+                    snapshotFlow { isPaused }.first { !it }
+                    last = withFrameNanos { it }
+                    continue
+                }
+                if (sim.phase == MazeSim.Phase.HOLD) {
+                    // 解き終わって止まっている間は、画面を更新せずに待つ
+                    delay(200)
+                    if (sim.update(0.2f * speed, config.genSpeed, config.solveSpeed, config.holdSec)) tick.intValue++
+                    last = withFrameNanos { it }
+                    continue
+                }
                 withFrameNanos { now ->
                     val dt = ((now - last) / 1e9f).coerceIn(0f, 0.1f)
                     last = now
-                    if (!isPaused && gate.add(dt, fps) &&
+                    if (gate.add(dt, fps) &&
                         sim.update(gate.consume().coerceAtMost(0.1f) * speed, config.genSpeed, config.solveSpeed, config.holdSec)
                     ) tick.intValue++
                 }
@@ -953,10 +952,16 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
             val gate = FrameGate()
             var last = withFrameNanos { it }
             while (isActive) {
+                if (isPaused) {
+                    snapshotFlow { isPaused }.first { !it }
+                    last = withFrameNanos { it }
+                    continue
+                }
                 withFrameNanos { now ->
                     val dt = ((now - last) / 1e9f).coerceIn(0f, 0.1f)
                     last = now
-                    if (!isPaused && gate.add(dt, fps) && sim.update(gate.consume().coerceAtMost(0.1f) * speed, config)) tick.intValue++
+                    // セルの世代は 0.1 秒ごとくらいなので、描き直しは最大 30fps で十分
+                    if (gate.add(dt, if (fps == 0) 30 else min(fps, 30)) && sim.update(gate.consume().coerceAtMost(0.1f) * speed, config)) tick.intValue++
                 }
             }
         }

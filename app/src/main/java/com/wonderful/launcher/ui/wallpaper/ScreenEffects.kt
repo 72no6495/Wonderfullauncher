@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.wonderful.launcher.data.LauncherSettings
@@ -31,7 +32,7 @@ fun ScreenEffects(s: LauncherSettings, p: RetroPalette, paused: Boolean) {
     if (!anyOn) return
     val t by rememberSceneTime(s.animSpeed, paused)
     val grain = remember { List(3) { makeNoise(it) } }
-    Canvas(Modifier.fillMaxSize()) {
+    Canvas(Modifier.fillMaxSize().graphicsLayer()) {
         val time = t
         val w = size.width
         val h = size.height

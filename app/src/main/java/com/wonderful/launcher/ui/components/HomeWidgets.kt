@@ -68,6 +68,8 @@ import com.wonderful.launcher.ui.theme.LocalPalette
 import com.wonderful.launcher.ui.theme.LocalRetroFont
 import com.wonderful.launcher.ui.theme.LocalSettings
 import com.wonderful.launcher.ui.theme.jelly
+import com.wonderful.launcher.ui.theme.LocalAnimTime
+import com.wonderful.launcher.ui.theme.wave
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -97,10 +99,7 @@ fun RetroClock(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val ampm = remember(now) { SimpleDateFormat("a", Locale.US).format(Date(now)) }
     val date = remember(now) { SimpleDateFormat("yyyy.MM.dd (E)", Locale.JAPAN).format(Date(now)) }
 
-    val flicker by rememberInfiniteTransition(label = "clock").animateFloat(
-        0.85f, 1f, infiniteRepeatable(tween((1800 / s.animSpeed).toInt(), easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "flicker",
-    )
+    val anim = LocalAnimTime.current
     val size = (64 * s.clockScale).sp
     val font = LocalRetroFont.current
 
@@ -114,7 +113,7 @@ fun RetroClock(onClick: () -> Unit, modifier: Modifier = Modifier) {
             when (s.clockStyle) {
                 ClockStyle.NEON -> NeonText(
                     time, size = size, color = Color.White, glow = p.pink,
-                    letterSpacing = 4.sp, modifier = Modifier.graphicsLayer { alpha = flicker },
+                    letterSpacing = 4.sp, modifier = Modifier.graphicsLayer { alpha = 0.85f + 0.15f * anim.wave(3.6f) },
                 )
                 ClockStyle.CHROME -> {
                     // 80 年代ロゴ風のクローム文字
@@ -196,17 +195,11 @@ fun CornerButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.82f else 1f, spring(dampingRatio = s.jelly(0.3f), stiffness = 500f), label = "corner")
-    val infinite = rememberInfiniteTransition(label = "float")
-    // 角度を 0→2π で回し続けて sin を取る（端で折り返さないので途中でカクッとならない）
-    val bobPeriod = (3200 / (s.animSpeed * s.cornerFloatSpeed).coerceAtLeast(0.05f)).toInt()
-    val bob by infinite.animateFloat(
-        0f, (2 * PI).toFloat(), infiniteRepeatable(tween(bobPeriod, easing = LinearEasing), RepeatMode.Restart),
-        label = "bob",
-    )
+    // 共通の時計で sin 波を作る（端で折り返さないので途中でカクッとならない）。
+    // 浮遊・グローが OFF なら値を読まないので、その分の描き直しも起きない
+    val anim = LocalAnimTime.current
+    val bobPeriod = 3.2f / s.cornerFloatSpeed.coerceAtLeast(0.05f)
     val floatPx = with(LocalDensity.current) { (8.dp * s.cornerFloatAmount).toPx() }
-    val glowPulse by infinite.animateFloat(
-        0.4f, 1f, infiniteRepeatable(tween((1500 / s.animSpeed).toInt()), RepeatMode.Reverse), label = "glow",
-    )
     val color = when (action) {
         CornerAction.SEARCH -> p.cyan
         CornerAction.SETTINGS -> p.yellow
@@ -220,7 +213,7 @@ fun CornerButton(
     Column(
         modifier
             .graphicsLayer {
-                translationY = if (s.cornerFloat) sin(bob + phase * 2f * PI.toFloat()) * floatPx else 0f
+                translationY = if (s.cornerFloat) (anim.wave(bobPeriod, phase) * 2f - 1f) * floatPx else 0f
                 scaleX = scale; scaleY = scale
                 alpha = s.cornerOpacity
             },
@@ -232,7 +225,7 @@ fun CornerButton(
                 .drawBehind {
                     if (s.cornerGlow) {
                         drawCircle(
-                            Brush.radialGradient(listOf(color.copy(alpha = 0.55f * glowPulse), Color.Transparent)),
+                            Brush.radialGradient(listOf(color.copy(alpha = 0.55f * (0.4f + 0.6f * anim.wave(3f, phase))), Color.Transparent)),
                             radius = size.minDimension * 0.95f,
                         )
                     }
@@ -313,12 +306,11 @@ fun Dock(
 @Composable
 fun Badge(count: Int, showCount: Boolean, modifier: Modifier = Modifier) {
     val p = LocalPalette.current
-    val pulse by rememberInfiniteTransition(label = "badge").animateFloat(
-        0.85f, 1.1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "pulse",
-    )
+    val anim = LocalAnimTime.current
     Box(
         modifier
-            .scale(pulse)
+            // 描画時に読むので、脈打っても再コンポーズは起きない
+            .graphicsLayer { val k = 0.85f + 0.25f * anim.wave(1.4f); scaleX = k; scaleY = k }
             .size(if (showCount) 19.dp else 11.dp)
             .clip(androidx.compose.foundation.shape.CircleShape)
             .background(p.pink)

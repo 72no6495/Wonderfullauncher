@@ -68,9 +68,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         atHome = true
-        // 他のアプリでアンインストールなどが行われた可能性があるので更新
-        vm.repo.refresh()
-        vm.refreshRecent()
+        // ※ アプリ一覧はインストール/削除の通知（LauncherApps.Callback）で更新されるので、
+        //   ホームに戻るたびに全アプリを読み直す必要はない。最近の履歴もパネルを開いた時に読む。
     }
 
     override fun onStop() {

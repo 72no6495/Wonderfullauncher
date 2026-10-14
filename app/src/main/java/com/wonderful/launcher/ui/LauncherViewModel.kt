@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.random.Random
 
@@ -121,24 +122,84 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         SortOrder.SHUFFLE -> list.sortedBy { it.key }.shuffled(Random(d.settings.shuffleSeed))
     }
 
+    private var initializing = false
+
     private fun initDefaults(list: List<AppInfo>) {
+        if (initializing) return
+        initializing = true
+        viewModelScope.launch {
+            val dock = withContext(Dispatchers.Default) {
+                defaultHandlerPkgs(dockOnly = true).mapNotNull { p ->
+                    list.firstOrNull { it.packageName == p && !it.isWorkProfile }?.key
+                }
+            }
+            val sphere = withContext(Dispatchers.Default) { recommendedSphere(list) }
+            store.update {
+                if (it.sphereInitialized) it
+                else it.copy(
+                    sphereApps = sphere,
+                    sphereInitialized = true,
+                    dockApps = if (it.dockApps.isEmpty()) dock else it.dockApps,
+                )
+            }
+            initializing = false
+        }
+    }
+
+    /** 電話・メッセージ・ブラウザ・カメラなど、端末の「いつものアプリ」のパッケージ名 */
+    private fun defaultHandlerPkgs(dockOnly: Boolean): List<String> {
         val pm = ctx.packageManager
-        fun pkgFor(intent: Intent): String? =
+        fun pkgFor(intent: Intent): String? = runCatching {
             pm.resolveActivity(intent, 0)?.activityInfo?.packageName?.takeIf { it != "android" }
-        val dockPkgs = listOfNotNull(
-            pkgFor(Intent(Intent.ACTION_DIAL)),
-            pkgFor(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:"))),
-            pkgFor(Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))),
-            pkgFor(Intent(MediaStore.ACTION_IMAGE_CAPTURE)),
-        ).distinct()
-        val dock = dockPkgs.mapNotNull { p -> list.firstOrNull { it.packageName == p && !it.isWorkProfile }?.key }
-        val max = data.value.settings.sphereMaxApps
-        store.update {
-            it.copy(
-                sphereApps = list.take(max).map { a -> a.key },
-                sphereInitialized = true,
-                dockApps = if (it.dockApps.isEmpty()) dock else it.dockApps,
-            )
+        }.getOrNull()
+        val dock = listOf(
+            Intent(Intent.ACTION_DIAL),
+            Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")),
+            Intent(MediaStore.ACTION_IMAGE_CAPTURE),
+        )
+        val more = if (dockOnly) emptyList() else listOf(
+            Intent(android.provider.Settings.ACTION_SETTINGS),
+            Intent(Intent.ACTION_VIEW).setType("image/*"),
+            Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0")),
+            Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS),
+            Intent(Intent.ACTION_VIEW, Uri.parse("content://com.android.calendar/time")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("content://contacts/people")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.android.chrome")),
+            Intent(Intent.ACTION_VIEW).setType("audio/*"),
+        )
+        return (dock + more).mapNotNull(::pkgFor).filter { it != ctx.packageName }.distinct()
+    }
+
+    /**
+     * 最初に球体へ入れるアプリ。全部入れると多すぎるので、
+     * 「いつものアプリ」＋自分で入れたアプリ（新しい順）から最大 [RECOMMENDED_SPHERE] 個に絞る。
+     */
+    private fun recommendedSphere(list: List<AppInfo>): List<String> {
+        val pm = ctx.packageManager
+        val main = list.filter { !it.isWorkProfile && it.packageName != ctx.packageName }
+        val picked = LinkedHashSet<String>()
+        defaultHandlerPkgs(dockOnly = false).forEach { p ->
+            main.firstOrNull { it.packageName == p }?.let { picked += it.key }
+        }
+        fun userInstalled(a: AppInfo): Boolean = runCatching {
+            val f = pm.getApplicationInfo(a.packageName, 0).flags
+            f and android.content.pm.ApplicationInfo.FLAG_SYSTEM == 0 ||
+                f and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP != 0
+        }.getOrDefault(false)
+        val (mine, system) = main.filter { it.key !in picked }.partition(::userInstalled)
+        mine.sortedByDescending { it.installTime }.forEach { if (picked.size < RECOMMENDED_SPHERE) picked += it.key }
+        system.forEach { if (picked.size < RECOMMENDED_SPHERE) picked += it.key }
+        return picked.take(RECOMMENDED_SPHERE)
+    }
+
+    /** 設定画面の「おすすめだけにする」 */
+    fun resetSphereToRecommended() {
+        viewModelScope.launch {
+            val list = apps.value
+            val keys = withContext(Dispatchers.Default) { recommendedSphere(list) }
+            store.update { d -> d.copy(sphereApps = keys.filter { it !in d.hiddenApps }) }
         }
     }
 
@@ -394,5 +455,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val DOCK_MAX = 6
+        /** 初回起動時に球体へ入れるアプリの数 */
+        const val RECOMMENDED_SPHERE = 24
     }
 }
