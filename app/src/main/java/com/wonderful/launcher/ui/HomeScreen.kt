@@ -2,7 +2,12 @@ package com.wonderful.launcher.ui
 
 import android.accessibilityservice.AccessibilityService
 import android.widget.Toast
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import com.wonderful.launcher.ui.wallpaper.ScreenEffects
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
@@ -154,6 +159,21 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             val rootW = constraints.maxWidth.toFloat()
             val rootH = constraints.maxHeight.toFloat()
 
+            // パネルを開いている間は後ろ（壁紙＋ホーム）をぼかす
+            val backdropBlur by animateFloatAsState(
+                if (s.panelBlur && (panel != Panel.NONE || menuApp != null)) 1f else 0f,
+                tween((350 / s.animSpeed).toInt()), label = "backdrop",
+            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        if (backdropBlur > 0.01f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val r = backdropBlur * 14.dp.toPx()
+                            renderEffect = BlurEffect(r, r, TileMode.Clamp)
+                        }
+                    },
+            ) {
             WallpaperLayer(s, p, paused = panel != Panel.NONE)
 
             // ── ホーム ──
@@ -245,6 +265,8 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                 }
             }
 
+            }
+
             // ── パネル ──
             AnimatedVisibility(panel != Panel.NONE || menuApp != null, enter = fadeIn(tween(200)), exit = fadeOut(tween(250))) {
                 Box(Modifier.fillMaxSize()) { Scrim { if (menuApp != null) vm.showMenu(null) else vm.closePanel() } }
@@ -324,6 +346,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                 }
             }
 
+            ScreenEffects(s, p, paused = false)
             CrtOverlay(s)
         }
     }

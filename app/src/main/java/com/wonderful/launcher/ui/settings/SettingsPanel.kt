@@ -69,6 +69,8 @@ import com.wonderful.launcher.data.WallpaperType
 import com.wonderful.launcher.ui.LauncherViewModel
 import com.wonderful.launcher.ui.Panel
 import com.wonderful.launcher.data.GestureSlot
+import com.wonderful.launcher.data.TapEffect
+import android.os.Build
 import com.wonderful.launcher.data.Migration
 import com.wonderful.launcher.data.SpecialPermission
 import com.wonderful.launcher.data.actionFor
@@ -101,6 +103,7 @@ private enum class Tab(val label: String) {
     SPHERE("球体"),
     BUTTONS("ボタン"),
     LOOK("見た目"),
+    EFFECTS("エフェクト"),
     WALLPAPER("壁紙"),
     CLOCK("時計"),
     SEARCH("検索"),
@@ -161,6 +164,7 @@ fun SettingsPanel(
                         Tab.SPHERE -> SphereTab(s, update, vm, onResetSphere)
                         Tab.BUTTONS -> ButtonsTab(s, update)
                         Tab.LOOK -> LookTab(s, update)
+                        Tab.EFFECTS -> EffectsTab(s, update)
                         Tab.WALLPAPER -> WallpaperTab(s, update)
                         Tab.CLOCK -> ClockTab(s, update)
                         Tab.SEARCH -> SearchTab(s, update)
@@ -292,7 +296,7 @@ private fun SphereTab(s: LauncherSettings, u: Update, vm: LauncherViewModel, onR
 
     SectionHeader("操作とアニメーション")
     SwitchSetting("ピンチで拡大縮小", s.pinchToZoom) { v -> u { it.copy(pinchToZoom = v) } }
-    SwitchSetting("タップでバウンド", s.tapBounce) { v -> u { it.copy(tapBounce = v) } }
+    ChoiceSetting("タップした時の動き", TapEffect.entries, s.tapEffect, { it.label }) { v -> u { it.copy(tapEffect = v) } }
     SwitchSetting("起動時ズームアニメ", s.launchZoom, "アイコンからアプリが広がる") { v -> u { it.copy(launchZoom = v) } }
     SwitchSetting("出現アニメーション", s.entranceAnim, "アプリ追加時に中心から飛び出す") { v -> u { it.copy(entranceAnim = v) } }
     SwitchSetting("振動フィードバック", s.haptics) { v -> u { it.copy(haptics = v) } }
@@ -362,6 +366,49 @@ private fun LookTab(s: LauncherSettings, u: Update) {
 }
 
 @Composable
+private fun EffectsTab(s: LauncherSettings, u: Update) {
+    val p = LocalPalette.current
+    val blurOk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    SectionHeader("ゴム（ビヨンビヨン）")
+    SliderSetting(
+        "ゴムの柔らかさ", s.rubber, 0f..1f,
+        "アイコンがバネのように遅れてついてきて、伸び縮みします。ボタンの弾みにも影響",
+        format = { if (it < 0.01f) "OFF" else pct(it) },
+    ) { v -> u { it.copy(rubber = v) } }
+    ChoiceSetting("タップした時の動き", TapEffect.entries, s.tapEffect, { it.label }) { v -> u { it.copy(tapEffect = v) } }
+    SwitchSetting("タップで火花", s.tapParticles, "アイコンから光の粒が飛び散る") { v -> u { it.copy(tapParticles = v) } }
+
+    SectionHeader("ぼかし")
+    if (!blurOk) RetroLabel("※ ぼかしは Android 12 以降で使えます", size = 11.sp, color = p.yellow)
+    SliderSetting(
+        "奥のアイコンをぼかす", s.dofBlur, 0f..1f, "カメラのピントのような奥行き（被写界深度）",
+        format = { if (it < 0.01f) "OFF" else pct(it) },
+    ) { v -> u { it.copy(dofBlur = v) } }
+    SwitchSetting("パネル表示中に背景をぼかす", s.panelBlur) { v -> u { it.copy(panelBlur = v) } }
+    SliderSetting("壁紙のぼかし", s.wallpaperBlur, 0f..1f, format = ::pct) { v -> u { it.copy(wallpaperBlur = v) } }
+
+    SectionHeader("アイコンの動き")
+    SliderSetting("ふわふわ浮遊", s.iconFloat, 0f..1f, format = { if (it < 0.01f) "OFF" else pct(it) }) { v -> u { it.copy(iconFloat = v) } }
+    SliderSetting("残像（トレイル）", s.trailLength, 0f..1f, "回すと軌跡が残る", format = { if (it < 0.01f) "OFF" else pct(it) }) { v -> u { it.copy(trailLength = v) } }
+    SwitchSetting("虹色グロー", s.rainbowGlow, "アイコンの光が虹色に変化し続ける") { v -> u { it.copy(rainbowGlow = v) } }
+
+    SectionHeader("画面全体")
+    SliderSetting("フィルムグレイン", s.filmGrain, 0f..1f, "古い映像のようなザラザラ", format = { if (it < 0.01f) "OFF" else pct(it) }) { v -> u { it.copy(filmGrain = v) } }
+    SwitchSetting("VHSトラッキング", s.vhsTracking, "ビデオテープのノイズの帯が流れる") { v -> u { it.copy(vhsTracking = v) } }
+    SwitchSetting("ランダムグリッチ", s.glitchOverlay, "ときどき画面にノイズが走る") { v -> u { it.copy(glitchOverlay = v) } }
+    SwitchSetting("走査線", s.scanlines) { v -> u { it.copy(scanlines = v) } }
+    SwitchSetting("ビネット（周辺減光）", s.vignette) { v -> u { it.copy(vignette = v) } }
+
+    SectionHeader("プリセット")
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        RetroButton("控えめ", { u { it.copy(rubber = 0.15f, tapEffect = TapEffect.BOUNCE, tapParticles = false, iconFloat = 0f, trailLength = 0f, rainbowGlow = false, filmGrain = 0f, vhsTracking = false, glitchOverlay = false) } }, color = p.cyan)
+        RetroButton("ぷるぷる", { u { it.copy(rubber = 0.85f, tapEffect = TapEffect.JELLY, tapParticles = true, iconFloat = 0.4f) } }, color = p.pink)
+        RetroButton("VHS", { u { it.copy(filmGrain = 0.6f, vhsTracking = true, glitchOverlay = true, scanlines = true, chromaticText = true) } }, color = p.yellow)
+        RetroButton("全部盛り", { u { it.copy(rubber = 0.9f, tapEffect = TapEffect.JELLY, tapParticles = true, iconFloat = 0.6f, trailLength = 0.7f, rainbowGlow = true, dofBlur = 0.6f, filmGrain = 0.4f, vhsTracking = true, glitchOverlay = true) } }, color = p.mint)
+    }
+}
+
+@Composable
 private fun WallpaperTab(s: LauncherSettings, u: Update) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -390,9 +437,24 @@ private fun WallpaperTab(s: LauncherSettings, u: Update) {
     SliderSetting("暗くする", s.wallpaperDim, 0f..0.9f, format = ::pct) { v -> u { it.copy(wallpaperDim = v) } }
     SliderSetting("ぼかし", s.wallpaperBlur, 0f..1f, "Android 12 以降", format = ::pct) { v -> u { it.copy(wallpaperBlur = v) } }
 
+    if (s.wallpaperType.animated) {
+        SectionHeader("アニメーション")
+        SliderSetting("背景の動く速さ", s.gridSpeed, 0.1f..4f, format = { "x%.1f".format(it) }) { v -> u { it.copy(gridSpeed = v) } }
+    }
+    when (s.wallpaperType) {
+        WallpaperType.MAZE -> {
+            SectionHeader("迷路")
+            RetroLabel("迷路を自動で作り（ピンク）、左上から右下へ自動で解きます（水色 → 黄色の道）", size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 3)
+            SliderSetting("マスの大きさ", s.mazeCellDp, 14f..60f, "小さいほど複雑な迷路", format = { "${it.toInt()}dp" }) { v -> u { it.copy(mazeCellDp = v) } }
+        }
+        WallpaperType.GLITCH -> {
+            SectionHeader("グリッチ")
+            SliderSetting("グリッチの強さ", s.glitchIntensity, 0f..1f, format = ::pct) { v -> u { it.copy(glitchIntensity = v) } }
+        }
+        else -> Unit
+    }
     if (s.wallpaperType == WallpaperType.VAPOR_GRID) {
         SectionHeader("ヴェイパー風景")
-        SliderSetting("グリッドの速さ", s.gridSpeed, 0.1f..4f, format = { "x%.1f".format(it) }) { v -> u { it.copy(gridSpeed = v) } }
         SwitchSetting("太陽", s.showSun) { v -> u { it.copy(showSun = v) } }
         if (s.showSun) SwitchSetting("太陽の横縞", s.sunStripes) { v -> u { it.copy(sunStripes = v) } }
         SwitchSetting("山", s.showMountains) { v -> u { it.copy(showMountains = v) } }
@@ -667,8 +729,8 @@ private fun AboutTab(data: LauncherData, apps: List<AppInfo>) {
     }
     Spacer(Modifier.height(20.dp))
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        NeonText("ＷＯＮＤＥＲＦＵＬ", size = 26.sp)
-        NeonText("ＬＡＵＮＣＨＥＲ", size = 26.sp, glow = p.cyan)
+        NeonText("ｗｏｎｄｅｒｆｕｌ", size = 28.sp)
+        NeonText("ｌａｕｎｃｈｅｒ", size = 28.sp, glow = p.cyan)
         Spacer(Modifier.height(6.dp))
         RetroLabel("ｖａｐｏｒｗａｖｅ  ｅｄｉｔｉｏｎ", color = p.pink)
     }

@@ -1,6 +1,6 @@
 <resources>
-    <string name="app_name">Wonderful Launcher</string>
-    <string name="accessibility_label">Wonderful Launcher ジェスチャー</string>
+    <string name="app_name">wonderful launcher</string>
+    <string name="accessibility_label">wonderful launcher ジェスチャー</string>
     <string name="accessibility_description">ホーム画面のジェスチャーから、画面ロック・スクリーンショット・電源メニュー・タスク一覧などを実行するために使います。画面の内容を読み取ることはありません。</string>
-    <string name="badge_service_label">Wonderful Launcher 通知バッジ</string>
+    <string name="badge_service_label">wonderful launcher 通知バッジ</string>
 </resources>

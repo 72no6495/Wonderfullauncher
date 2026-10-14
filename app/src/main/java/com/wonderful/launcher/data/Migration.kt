@@ -15,11 +15,12 @@ import kotlinx.serialization.json.jsonObject
 object Migration {
 
     /** 現在の保存形式バージョン */
-    const val CURRENT_VERSION = 2
+    const val CURRENT_VERSION = 3
 
     fun migrate(input: LauncherData): LauncherData {
         var d = input
         if (d.dataVersion < 2) d = v1ToV2(d)
+        if (d.dataVersion < 3) d = v2ToV3(d)
         return sanitize(d.copy(dataVersion = maxOf(d.dataVersion, CURRENT_VERSION)))
     }
 
@@ -35,6 +36,16 @@ object Migration {
         }
         s = s.copy(clockTapAction = if (s.clockTapOpensAlarm) GestureAction.ALARM else GestureAction.NONE)
         return d.copy(settings = s, dataVersion = 2)
+    }
+
+    /**
+     * v2 → v3
+     * - 「タップでバウンド」の ON/OFF を、タップエフェクトの種類に置き換え
+     */
+    private fun v2ToV3(d: LauncherData): LauncherData {
+        val s = d.settings
+        val effect = if (s.tapBounce) s.tapEffect else TapEffect.NONE
+        return d.copy(settings = s.copy(tapEffect = effect), dataVersion = 3)
     }
 
     /**
@@ -62,6 +73,13 @@ object Migration {
             searchColumns = s.searchColumns.coerceIn(3, 6),
             folderColumns = s.folderColumns.coerceIn(3, 6),
             recentCount = s.recentCount.coerceIn(5, 40),
+            rubber = s.rubber.finiteIn(0f, 1f, 0.45f),
+            iconFloat = s.iconFloat.finiteIn(0f, 1f, 0f),
+            trailLength = s.trailLength.finiteIn(0f, 1f, 0f),
+            dofBlur = s.dofBlur.finiteIn(0f, 1f, 0.35f),
+            filmGrain = s.filmGrain.finiteIn(0f, 1f, 0f),
+            mazeCellDp = s.mazeCellDp.finiteIn(14f, 60f, 26f),
+            glitchIntensity = s.glitchIntensity.finiteIn(0f, 1f, 0.5f),
         )
         if (!settingsReachable(s)) s = s.copy(longPressAction = GestureAction.SETTINGS)
 

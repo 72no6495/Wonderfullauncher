@@ -61,6 +61,10 @@ class SphereEngine {
     var pulseTime = 1f; private set
     var pulseStrong = false; private set
 
+    /** 直前の step で何か動いていたか */
+    var isAnimating = false
+        private set
+
     /** ワイヤーフレーム（レイアウト空間の折れ線群） */
     var wires: List<FloatArray> = emptyList(); private set
 
@@ -189,9 +193,10 @@ class SphereEngine {
         }
 
         if (pulseTime < 1f) {
-            pulseTime = (pulseTime + d / (if (pulseStrong) 0.45f else 0.3f) * s.animSpeed).coerceAtMost(1f)
+            pulseTime = (pulseTime + d / 0.6f * s.animSpeed).coerceAtMost(1f)
             moved = true
         }
+        isAnimating = moved
         return moved
     }
 
@@ -208,12 +213,7 @@ class SphereEngine {
             val t = ((rz + 1f) * 0.5f).coerceIn(0f, 1f)
             px[i] = cx + rx * radius * persp
             py[i] = cy - ry * radius * persp
-            var sz = iconPx * persp * (1f - s.depthScale * (1f - t))
-            if (i == pulseIndex && pulseTime < 1f) {
-                val amp = if (pulseStrong) 0.8f else 0.3f
-                sz *= 1f + amp * sin(PI.toFloat() * pulseTime)
-            }
-            size[i] = sz
+            size[i] = iconPx * persp * (1f - s.depthScale * (1f - t))
             depth[i] = t
             alpha[i] = (1f - s.depthFade * (1f - t)).coerceIn(0.05f, 1f)
         }

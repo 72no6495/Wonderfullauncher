@@ -43,6 +43,17 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.data.LabelMode
+import com.wonderful.launcher.data.TapEffect
+import android.os.Build
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlin.math.PI
+import kotlin.math.exp
+import kotlin.math.sin
 import com.wonderful.launcher.data.LauncherSettings
 import com.wonderful.launcher.ui.theme.RetroPalette
 import kotlinx.coroutines.isActive
@@ -71,6 +82,7 @@ fun SphereView(
     modifier: Modifier = Modifier,
 ) {
     val engine = remember { SphereEngine() }
+    val fx = remember { SphereFx() }
     val frame = remember { mutableIntStateOf(0) }
     val view = LocalView.current
 
@@ -110,15 +122,17 @@ fun SphereView(
             withFrameNanos { now ->
                 val dt = (now - last) / 1_000_000_000f
                 last = now
-                if (!currentPaused && engine.step(dt, currentSettings, currentSettings.entranceAnim)) {
-                    frame.intValue++
-                }
+                if (currentPaused) return@withFrameNanos
+                val moved = engine.step(dt, currentSettings, currentSettings.entranceAnim)
+                fx.advance(dt)
+                if (moved || fx.needsFrames(currentSettings)) frame.intValue++
             }
         }
     }
 
     // 描画用の使い回しオブジェクト
     val glow = remember { makeGlowBitmap() }
+    val rainbowFilters = remember { List(36) { ColorFilter.tint(Color.hsv(it * 10f, 0.85f, 1f)) } }
     val glowFilters = remember(palette) {
         listOf(ColorFilter.tint(palette.pink), ColorFilter.tint(palette.cyan), ColorFilter.tint(palette.purple))
     }
@@ -159,7 +173,161 @@ fun SphereView(
         launchCb(app, r, opts)
     }
 
-    Canvas(
+    /**
+     * アイコンを奥から順に描く。back = true なら奥側だけ、false なら手前側だけ、null なら全部。
+     */
+    fun DrawScope.drawIcons(back: Boolean?, iconPx: Float) {
+        val s = currentSettings
+        val front = engine.frontIndex()
+        val ringStroke = Stroke(1.5.dp.toPx())
+        labelPaint.textSize = s.labelSizeSp.sp.toPx()
+        labelPaint.typeface = Typeface.MONOSPACE
+        labelPaint.color = palette.text.toArgb()
+        labelPaint.setShadowLayer(labelPaint.textSize * 0.6f, 0f, 0f, palette.pink.toArgb())
+        val trails = fx.trailCount(s)
+        if (fx.x.size != engine.count) return
+
+        for (k in 0 until engine.count) {
+            val i = engine.order[k]
+            val t = engine.depth[i]
+            if (back == true && t >= DOF_SPLIT) continue
+            if (back == false && t < DOF_SPLIT) continue
+            val app = appByKey[engine.keys[i]] ?: continue
+            val x = fx.x[i]
+            val y = fx.y[i] + fx.floatY[i]
+            val sz = engine.size[i]
+            val a = engine.alpha[i]
+            val half = sz / 2f
+            val img = icons[app.key]
+
+            // 残像
+            if (trails > 0 && img != null && t > 0.4f) {
+                for (tk in trails downTo 1) {
+                    val f = 1f - tk / (trails + 1f)
+                    val ts = sz * (0.75f + 0.25f * f)
+                    drawImage(
+                        img, IntOffset.Zero, IntSize(img.width, img.height),
+                        IntOffset((fx.trailX(i, tk) - ts / 2).toInt(), (fx.trailY(i, tk) - ts / 2).toInt()),
+                        IntSize(ts.toInt(), ts.toInt()),
+                        alpha = a * 0.35f * f,
+                    )
+                }
+            }
+
+            // グロー
+            if (s.iconGlow && t > 0.45f) {
+                val g = half * 1.9f
+                val filter = if (s.rainbowGlow) {
+                    rainbowFilters[(((fx.time * 90f + i * 23f) % 360f) / 10f).toInt().coerceIn(0, rainbowFilters.lastIndex)]
+                } else glowFilters[i % glowFilters.size]
+                drawImage(
+                    glow,
+                    srcOffset = IntOffset.Zero,
+                    srcSize = IntSize(glow.width, glow.height),
+                    dstOffset = IntOffset((x - g).toInt(), (y - g).toInt()),
+                    dstSize = IntSize((g * 2).toInt(), (g * 2).toInt()),
+                    alpha = (s.glowIntensity * (t - 0.45f) / 0.55f * a).coerceIn(0f, 1f),
+                    colorFilter = filter,
+                )
+            }
+
+            // タップ時の動き
+            var sx = 1f
+            var sy = 1f
+            var rot = 0f
+            if (i == engine.pulseIndex && engine.pulseTime < 1f) {
+                val pt = engine.pulseTime
+                when (s.tapEffect) {
+                    TapEffect.JELLY -> {
+                        val j = 0.45f * exp(-3.2f * pt) * sin(pt * 22f)
+                        val pop = 1f + 0.18f * sin(PI.toFloat() * pt)
+                        sx = (1f + j) * pop; sy = (1f - j * 0.8f) * pop
+                    }
+                    TapEffect.BOUNCE -> {
+                        val amp = if (engine.pulseStrong) 0.8f else 0.3f
+                        sx = 1f + amp * sin(PI.toFloat() * pt); sy = sx
+                    }
+                    TapEffect.SPIN -> {
+                        rot = 360f * (1f - (1f - pt) * (1f - pt))
+                        sx = 1f + 0.25f * sin(PI.toFloat() * pt); sy = sx
+                    }
+                    TapEffect.NONE -> Unit
+                }
+            }
+            val stretch = fx.stretch[i]
+            val center = Offset(x, y)
+            withTransform({
+                if (rot != 0f) rotate(rot, center)
+                if (stretch > 1.002f) {
+                    // 動く向きに伸びて、横に縮む（ゴム）
+                    val ang = fx.stretchAngle[i]
+                    rotate(ang, center)
+                    scale(stretch, 1f / stretch, center)
+                    rotate(-ang, center)
+                }
+                if (sx != 1f || sy != 1f) scale(sx, sy, center)
+            }) {
+                if (img != null) {
+                    drawImage(
+                        img,
+                        srcOffset = IntOffset.Zero,
+                        srcSize = IntSize(img.width, img.height),
+                        dstOffset = IntOffset((x - half).toInt(), (y - half).toInt()),
+                        dstSize = IntSize(sz.toInt(), sz.toInt()),
+                        alpha = a,
+                        filterQuality = FilterQuality.Low,
+                    )
+                } else {
+                    // 読み込み中は頭文字の丸を表示
+                    drawCircle(palette.purple.copy(alpha = a * 0.8f), half, center)
+                    drawIntoCanvas { c ->
+                        initialPaint.textSize = half
+                        initialPaint.color = Color.White.copy(alpha = a).toArgb()
+                        c.nativeCanvas.drawText(app.label.take(1), x, y + half * 0.35f, initialPaint)
+                    }
+                }
+                if (s.iconRing && t > 0.3f) {
+                    val ringColor = if (i == front && s.focusFrontIcon) palette.yellow else palette.cyan
+                    drawCircle(ringColor.copy(alpha = a * (t - 0.3f) * 1.2f), half + ringStroke.width, center, style = ringStroke)
+                }
+            }
+
+            // 通知バッジ
+            val badge = if (s.showBadges && !app.isWorkProfile) badges[app.packageName] ?: 0 else 0
+            if (badge > 0 && t > 0.4f) {
+                val br = max(7.dp.toPx(), sz * (if (s.badgeShowCount) 0.2f else 0.12f))
+                val bc = Offset(x + half * 0.72f, y - half * 0.72f)
+                drawCircle(Color.White.copy(alpha = a), br + 1.5.dp.toPx(), bc)
+                drawCircle(palette.pink.copy(alpha = a), br, bc)
+                if (s.badgeShowCount) {
+                    drawIntoCanvas { c ->
+                        badgePaint.textSize = br * (if (badge > 9) 0.95f else 1.25f)
+                        badgePaint.alpha = (a * 255).toInt()
+                        c.nativeCanvas.drawText(
+                            if (badge > 99) "99+" else badge.toString(),
+                            bc.x, bc.y + badgePaint.textSize * 0.36f, badgePaint,
+                        )
+                    }
+                }
+            }
+
+            // アプリ名
+            val showLabel = when (s.labelMode) {
+                LabelMode.NONE -> s.focusFrontIcon && i == front
+                LabelMode.FRONT -> t > 0.78f || (s.focusFrontIcon && i == front)
+                LabelMode.ALL -> true
+            }
+            if (showLabel) {
+                val label = labelCache.getOrPut(app.key + "|" + labelPaint.textSize) { ellipsize(app.label, labelPaint, iconPx * 1.9f) }
+                labelPaint.alpha = (a * 255).toInt()
+                drawIntoCanvas { c ->
+                    c.nativeCanvas.drawText(label, x, y + half * sy + labelPaint.textSize * 1.15f, labelPaint)
+                }
+            }
+        }
+    }
+
+    Box(
         modifier = modifier
             .fillMaxSize()
             .onGloballyPositioned { val p = it.positionInRoot(); canvasPos[0] = p.x; canvasPos[1] = p.y }
@@ -265,7 +433,15 @@ fun SphereView(
                             val hit = engine.hitTest(down.position.x, down.position.y)
                             if (hit >= 0) {
                                 if (currentSettings.haptics) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                                if (currentSettings.tapBounce) engine.pulse(hit, currentSettings.launchZoom)
+                                if (currentSettings.tapEffect != TapEffect.NONE) engine.pulse(hit, currentSettings.launchZoom)
+                                if (currentSettings.tapParticles && hit < fx.x.size) {
+                                    fx.burst(
+                                        fx.x[hit], fx.y[hit],
+                                        listOf(palette.pink, palette.cyan, palette.yellow, palette.mint),
+                                        density,
+                                    )
+                                    frame.intValue++
+                                }
                                 launchAt(hit)
                             } else doubleTapCb?.let { cb ->
                                 val second = withTimeoutOrNull(viewConfiguration.doubleTapTimeoutMillis) {
@@ -281,114 +457,55 @@ fun SphereView(
                 }
             },
     ) {
-        frame.intValue // 読み取ることでフレームごとに再描画
-        val s = currentSettings
-        val (cx, cy, radius) = geometry(size.width, size.height)
-        val iconPx = s.iconSizeDp.dp.toPx()
-        engine.project(cx, cy, radius, iconPx, s)
+        // 奥のアイコン（被写界深度ぼかし）
+        val dof = currentSettings.dofBlur > 0f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    if (dof) {
+                        val r = currentSettings.dofBlur * 9.dp.toPx()
+                        renderEffect = BlurEffect(r, r, TileMode.Decal)
+                    }
+                },
+        ) {
+            frame.intValue // 読み取ることでフレームごとに再描画
+            val s = currentSettings
+            val (cx, cy, radius) = geometry(size.width, size.height)
+            val iconPx = s.iconSizeDp.dp.toPx()
+            engine.project(cx, cy, radius, iconPx, s)
+            fx.prepare(engine, s, iconPx)
 
-        // ── ワイヤーフレーム ──
-        if (s.wireframe && engine.count > 0) {
-            val wireStroke = 1.dp.toPx()
-            for ((wi, wire) in engine.wires.withIndex()) {
-                val color = if (wi % 2 == 0) palette.cyan else palette.pink
-                val n = wire.size / 3
-                engine.projectPoint(wire[0], wire[1], wire[2], cx, cy, radius, s, point)
-                for (k in 1 until n) {
-                    engine.projectPoint(wire[k * 3], wire[k * 3 + 1], wire[k * 3 + 2], cx, cy, radius, s, point2)
-                    val d = (point[2] + point2[2]) * 0.5f
-                    val a = s.wireframeOpacity * (0.15f + 0.85f * d * d)
-                    drawLine(color.copy(alpha = a), Offset(point[0], point[1]), Offset(point2[0], point2[1]), wireStroke)
-                    point[0] = point2[0]; point[1] = point2[1]; point[2] = point2[2]
-                }
-            }
-        }
-
-        // ── アイコン（奥から手前へ） ──
-        val front = engine.frontIndex()
-        val ringStroke = Stroke(1.5.dp.toPx())
-        labelPaint.textSize = s.labelSizeSp.sp.toPx()
-        labelPaint.typeface = Typeface.MONOSPACE
-        labelPaint.color = palette.text.toArgb()
-        labelPaint.setShadowLayer(labelPaint.textSize * 0.6f, 0f, 0f, palette.pink.toArgb())
-
-        for (k in 0 until engine.count) {
-            val i = engine.order[k]
-            val app = appByKey[engine.keys[i]] ?: continue
-            val x = engine.px[i]; val y = engine.py[i]
-            val sz = engine.size[i]
-            val a = engine.alpha[i]
-            val t = engine.depth[i]
-            val half = sz / 2f
-
-            if (s.iconGlow && t > 0.45f) {
-                val g = half * 1.9f
-                drawImage(
-                    glow,
-                    srcOffset = IntOffset.Zero,
-                    srcSize = IntSize(glow.width, glow.height),
-                    dstOffset = IntOffset((x - g).toInt(), (y - g).toInt()),
-                    dstSize = IntSize((g * 2).toInt(), (g * 2).toInt()),
-                    alpha = (s.glowIntensity * (t - 0.45f) / 0.55f * a).coerceIn(0f, 1f),
-                    colorFilter = glowFilters[i % glowFilters.size],
-                )
-            }
-
-            val img = icons[app.key]
-            if (img != null) {
-                drawImage(
-                    img,
-                    srcOffset = IntOffset.Zero,
-                    srcSize = IntSize(img.width, img.height),
-                    dstOffset = IntOffset((x - half).toInt(), (y - half).toInt()),
-                    dstSize = IntSize(sz.toInt(), sz.toInt()),
-                    alpha = a,
-                    filterQuality = FilterQuality.Low,
-                )
-            } else {
-                // 読み込み中は頭文字の丸を表示
-                drawCircle(palette.purple.copy(alpha = a * 0.8f), half, Offset(x, y))
-                drawIntoCanvas { c ->
-                    initialPaint.textSize = half
-                    initialPaint.color = Color.White.copy(alpha = a).toArgb()
-                    c.nativeCanvas.drawText(app.label.take(1), x, y + half * 0.35f, initialPaint)
-                }
-            }
-
-            val badge = if (s.showBadges && !app.isWorkProfile) badges[app.packageName] ?: 0 else 0
-            if (badge > 0 && t > 0.4f) {
-                val br = max(7.dp.toPx(), sz * (if (s.badgeShowCount) 0.2f else 0.12f))
-                val bc = Offset(x + half * 0.72f, y - half * 0.72f)
-                drawCircle(Color.White.copy(alpha = a), br + 1.5.dp.toPx(), bc)
-                drawCircle(palette.pink.copy(alpha = a), br, bc)
-                if (s.badgeShowCount) {
-                    drawIntoCanvas { c ->
-                        badgePaint.textSize = br * (if (badge > 9) 0.95f else 1.25f)
-                        badgePaint.alpha = (a * 255).toInt()
-                        c.nativeCanvas.drawText(
-                            if (badge > 99) "99+" else badge.toString(),
-                            bc.x, bc.y + badgePaint.textSize * 0.36f, badgePaint,
-                        )
+            // ワイヤーフレーム
+            if (s.wireframe && engine.count > 0) {
+                val wireStroke = 1.dp.toPx()
+                for ((wi, wire) in engine.wires.withIndex()) {
+                    val color = if (wi % 2 == 0) palette.cyan else palette.pink
+                    val n = wire.size / 3
+                    engine.projectPoint(wire[0], wire[1], wire[2], cx, cy, radius, s, point)
+                    for (k in 1 until n) {
+                        engine.projectPoint(wire[k * 3], wire[k * 3 + 1], wire[k * 3 + 2], cx, cy, radius, s, point2)
+                        val d = (point[2] + point2[2]) * 0.5f
+                        val a = s.wireframeOpacity * (0.15f + 0.85f * d * d)
+                        drawLine(color.copy(alpha = a), Offset(point[0], point[1]), Offset(point2[0], point2[1]), wireStroke)
+                        point[0] = point2[0]; point[1] = point2[1]; point[2] = point2[2]
                     }
                 }
             }
-
-            if (s.iconRing && t > 0.3f) {
-                val ringColor = if (i == front && s.focusFrontIcon) palette.yellow else palette.cyan
-                drawCircle(ringColor.copy(alpha = a * (t - 0.3f) * 1.2f), half + ringStroke.width, Offset(x, y), style = ringStroke)
-            }
-
-            val showLabel = when (s.labelMode) {
-                LabelMode.NONE -> s.focusFrontIcon && i == front
-                LabelMode.FRONT -> t > 0.78f || (s.focusFrontIcon && i == front)
-                LabelMode.ALL -> true
-            }
-            if (showLabel) {
-                val maxW = iconPx * 1.9f
-                val label = labelCache.getOrPut(app.key + "|" + labelPaint.textSize) { ellipsize(app.label, labelPaint, maxW) }
-                labelPaint.alpha = (a * 255).toInt()
-                drawIntoCanvas { c ->
-                    c.nativeCanvas.drawText(label, x, y + half + labelPaint.textSize * 1.15f, labelPaint)
+            if (dof) drawIcons(back = true, iconPx)
+        }
+        // 手前のアイコンと火花
+        Canvas(Modifier.fillMaxSize()) {
+            frame.intValue
+            val s = currentSettings
+            val iconPx = s.iconSizeDp.dp.toPx()
+            drawIcons(back = if (dof) false else null, iconPx)
+            if (fx.particlesAlive) {
+                val pr = 3.dp.toPx()
+                fx.forEachParticle { x, y, life, color ->
+                    val a = life.coerceIn(0f, 1f)
+                    drawCircle(color.copy(alpha = a), pr * (0.5f + a), Offset(x, y))
+                    drawCircle(Color.White.copy(alpha = a * 0.8f), pr * 0.35f, Offset(x, y))
                 }
             }
         }
@@ -418,3 +535,6 @@ private fun makeGlowBitmap(): ImageBitmap {
     canvas.drawCircle(Offset(size / 2f, size / 2f), size / 2f, paint)
     return img
 }
+
+/** この奥行きより奥のアイコンをぼかしレイヤーに描く */
+private const val DOF_SPLIT = 0.5f

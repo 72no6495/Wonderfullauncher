@@ -74,6 +74,7 @@ import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.ui.theme.LocalPalette
 import com.wonderful.launcher.ui.theme.LocalRetroFont
 import com.wonderful.launcher.ui.theme.LocalSettings
+import com.wonderful.launcher.ui.theme.jelly
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -249,7 +250,7 @@ fun RetroButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = 0.4f), label = "btn")
+    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = LocalSettings.current.jelly(0.4f)), label = "btn")
     val shape = RoundedCornerShape(6.dp)
     Box(
         modifier
@@ -334,7 +335,11 @@ fun AppTile(
     val p = LocalPalette.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.85f else 1f, spring(dampingRatio = 0.35f, stiffness = 600f), label = "tile")
+    val scale by animateFloatAsState(
+        if (pressed) 0.85f else 1f,
+        spring(dampingRatio = LocalSettings.current.jelly(0.35f), stiffness = 600f),
+        label = "tile",
+    )
     Column(
         modifier
             .scale(scale)

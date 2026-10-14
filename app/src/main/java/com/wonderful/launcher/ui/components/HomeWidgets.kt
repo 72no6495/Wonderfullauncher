@@ -63,6 +63,7 @@ import com.wonderful.launcher.data.CornerAction
 import com.wonderful.launcher.ui.theme.LocalPalette
 import com.wonderful.launcher.ui.theme.LocalRetroFont
 import com.wonderful.launcher.ui.theme.LocalSettings
+import com.wonderful.launcher.ui.theme.jelly
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -190,7 +191,7 @@ fun CornerButton(
     val p = LocalPalette.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.82f else 1f, spring(dampingRatio = 0.3f, stiffness = 500f), label = "corner")
+    val scale by animateFloatAsState(if (pressed) 0.82f else 1f, spring(dampingRatio = s.jelly(0.3f), stiffness = 500f), label = "corner")
     val infinite = rememberInfiniteTransition(label = "float")
     val bob by infinite.animateFloat(
         0f, 1f, infiniteRepeatable(tween((2600 / s.animSpeed).toInt(), easing = FastOutSlowInEasing), RepeatMode.Reverse),
@@ -286,7 +287,7 @@ fun Dock(
         apps.forEach { app ->
             val interaction = remember(app.key) { MutableInteractionSource() }
             val pressed by interaction.collectIsPressedAsState()
-            val sc by animateFloatAsState(if (pressed) 0.8f else 1f, spring(dampingRatio = 0.35f), label = "dock")
+            val sc by animateFloatAsState(if (pressed) 0.8f else 1f, spring(dampingRatio = s.jelly(0.35f)), label = "dock")
             Box(
                 Modifier
                     .scale(sc)

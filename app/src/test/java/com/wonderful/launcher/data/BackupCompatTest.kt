@@ -60,6 +60,36 @@ class BackupCompatTest {
     }
 
     @Test
+    fun v1TapBounceDefaultKeepsAnEffect() {
+        // v1 では「タップでバウンド」が ON（初期値）だったので、タップの動きは残る
+        val d = BackupCodec.decode(fixture("backup_v1.json"))
+        assertEquals(TapEffect.JELLY, d.settings.tapEffect)
+    }
+
+    @Test
+    fun v2BackupKeepsWidgetsAndGestures() {
+        // backup_v2.json は v2（ウィジェット・ジェスチャー追加版）のコードで書き出したもの
+        val d = BackupCodec.decode(fixture("backup_v2.json"))
+        assertEquals(Migration.CURRENT_VERSION, d.dataVersion)
+        assertEquals(PalettePreset.SEAPUNK, d.settings.palette)
+        assertEquals(GestureAction.LAUNCH_APP, d.settings.swipeLeftAction)
+        assertEquals("com.cam/.Main", d.settings.gestureApps["SWIPE_LEFT"])
+        assertEquals(GestureAction.LOCK_SCREEN, d.settings.twoFingerUpAction)
+        assertEquals(GestureAction.CAMERA, d.settings.clockTapAction)
+        assertFalse(d.settings.showBadges)
+        assertEquals(2, d.widgets.size)
+        assertEquals("買い物リスト", d.widgets.first { it.id == "w1" }.text)
+        val sys = d.widgets.first { it.id == "w2" }
+        assertEquals(WidgetKind.SYSTEM, sys.kind)
+        assertEquals("com.w/.Provider", sys.provider)
+        assertEquals(4, sys.x)
+        // v2 で「タップでバウンド」を OFF にしていたら、タップエフェクトもなし
+        assertEquals(TapEffect.NONE, d.settings.tapEffect)
+        // v3 で増えたエフェクト設定は初期値
+        assertEquals(LauncherSettings().rubber, d.settings.rubber, 0.0001f)
+    }
+
+    @Test
     fun currentFormatRoundTrips() {
         val original = BackupCodec.decode(fixture("backup_v1.json")).copy(
             widgets = listOf(WidgetItem("w1", WidgetKind.NOTE, x = 2, y = 3, w = 4, h = 2, text = "メモ")),

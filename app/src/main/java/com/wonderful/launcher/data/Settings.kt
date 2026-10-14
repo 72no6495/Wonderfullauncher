@@ -31,12 +31,28 @@ enum class SortOrder(val label: String) {
     SHUFFLE("シャッフル"),
 }
 
-enum class WallpaperType(val label: String) {
+enum class WallpaperType(val label: String, val animated: Boolean = true) {
     VAPOR_GRID("ヴェイパー"),
-    SYSTEM("システム"),
-    IMAGE("画像"),
+    SYSTEM("システム", animated = false),
+    IMAGE("画像", animated = false),
     GRADIENT("グラデ"),
-    SOLID("単色"),
+    SOLID("単色", animated = false),
+    UNDERWATER("水中"),
+    MAZE("迷路"),
+    GLITCH("グリッチ"),
+    MATRIX("デジタル雨"),
+    STARFIELD("ワープ"),
+    LAVA("ラバランプ"),
+    AURORA("オーロラ"),
+    LIFE("ライフゲーム"),
+}
+
+/** アイコンをタップした時の動き */
+enum class TapEffect(val label: String) {
+    JELLY("ぷるん"),
+    BOUNCE("バウンド"),
+    SPIN("スピン"),
+    NONE("なし"),
 }
 
 enum class ClockStyle(val label: String) {
@@ -173,7 +189,7 @@ data class LauncherSettings(
     val wireframe: Boolean = true,
     val wireframeOpacity: Float = 0.35f,
     val pinchToZoom: Boolean = true,
-    val tapBounce: Boolean = true,
+    val tapBounce: Boolean = true, // v2 までの項目。v3 からは tapEffect に移行
     val launchZoom: Boolean = true,
     val entranceAnim: Boolean = true,
     val focusFrontIcon: Boolean = true,
@@ -216,6 +232,8 @@ data class LauncherSettings(
     val sunStripes: Boolean = true,
     val solidColor: Long = 0xFF1A0033,
     val gradientAngle: Float = 90f,
+    val mazeCellDp: Float = 26f,
+    val glitchIntensity: Float = 0.5f,
 
     // ── 時計 ──
     val showClock: Boolean = true,
@@ -265,6 +283,22 @@ data class LauncherSettings(
     // ── 通知バッジ（通知へのアクセス許可が必要） ──
     val showBadges: Boolean = true,
     val badgeShowCount: Boolean = true,
+
+    // ── エフェクト ──
+    /** ゴムのようにビヨンビヨン（0 = OFF） */
+    val rubber: Float = 0.45f,
+    val tapEffect: TapEffect = TapEffect.JELLY,
+    val tapParticles: Boolean = true,
+    val iconFloat: Float = 0f,
+    val trailLength: Float = 0f,
+    val rainbowGlow: Boolean = false,
+    /** 奥のアイコンをぼかす（被写界深度、Android 12+） */
+    val dofBlur: Float = 0.35f,
+    /** パネルを開いた時に後ろをぼかす（Android 12+） */
+    val panelBlur: Boolean = true,
+    val filmGrain: Float = 0f,
+    val vhsTracking: Boolean = false,
+    val glitchOverlay: Boolean = false,
 
     // ── ウィジェット画面 ──
     val widgetFrame: Boolean = true,
