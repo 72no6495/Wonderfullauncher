@@ -147,7 +147,7 @@ JDK 17 と Android SDK（API 35）が必要です。Android Studio で開いて 
 
 ### リリースの作り方（メンテナー向け）
 
-`v1.2.3` のようなタグを push すると、[Release ワークフロー](.github/workflows/release.yml) がテスト・ビルドをして GitHub Releases に APK を公開します。
+`v1.2.3` のようなタグを push するか、Actions の Release ワークフローを手動実行（タグ名を入力）すると、[Release ワークフロー](.github/workflows/release.yml) がテスト・ビルドをして GitHub Releases に APK を公開します。
 リリースノートは `.github/release-notes.md` に書きます。
 
 署名には次のリポジトリ Secrets を使います（未設定なら debug 鍵で署名されます）。
