@@ -137,6 +137,40 @@ class BackupCompatTest {
     }
 
     @Test
+    fun v4BackupKeepsWallpaperDetails() {
+        // backup_v4.json は v4（壁紙ごとの詳細設定追加版）のコードで書き出したもの
+        val d = BackupCodec.decode(fixture("backup_v4.json"))
+        val s = d.settings
+        assertEquals(WallpaperType.LIFE, s.wallpaperType)
+        assertEquals(LifeRule.HIGHLIFE, s.life.rule)
+        assertEquals(CellShape.ROUND, s.life.shape)
+        assertEquals(LifeColor.RAINBOW, s.life.color)
+        assertEquals(9f, s.life.cellDp, 0.001f)
+        assertEquals(MazeSolver.ASTAR, s.maze.solver)
+        assertEquals(33f, s.maze.cellDp, 0.001f)
+        assertEquals(0.8f, s.rubber, 0.001f)
+        assertEquals(TrailStyle.LINE, s.trailStyle)
+        assertEquals(WidgetKind.BATTERY, d.widgets.single().kind)
+        // その後に増えた項目は初期値（人口グラフは時計と重ならない左下へ）
+        assertEquals(ScreenCorner.BOTTOM_LEFT, s.life.hudCorner)
+        assertFalse(s.liteMode)
+        assertEquals(0, s.fpsLimit)
+        assertTrue(s.chargeAnim)
+        assertEquals(LauncherSettings().cornerFloatAmount, s.cornerFloatAmount, 0.0001f)
+    }
+
+    @Test
+    fun liteModeOnlyAffectsRendering() {
+        val s = LauncherSettings(liteMode = true, dofBlur = 0.8f, trailLength = 0.5f, fpsLimit = 0)
+        val e = s.effective()
+        assertEquals(0f, e.dofBlur, 0f)
+        assertEquals(0f, e.trailLength, 0f)
+        assertEquals(30, e.fpsLimit)
+        // 保存される設定は変わらない
+        assertEquals(0.8f, BackupCodec.decode(BackupCodec.encode(LauncherData(settings = s))).settings.dofBlur, 0.001f)
+    }
+
+    @Test
     fun currentFormatRoundTrips() {
         val original = BackupCodec.decode(fixture("backup_v1.json")).copy(
             widgets = listOf(WidgetItem("w1", WidgetKind.NOTE, x = 2, y = 3, w = 4, h = 2, text = "メモ")),

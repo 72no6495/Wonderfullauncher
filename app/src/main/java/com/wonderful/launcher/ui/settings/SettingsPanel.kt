@@ -71,6 +71,7 @@ import com.wonderful.launcher.ui.LauncherViewModel
 import com.wonderful.launcher.ui.Panel
 import com.wonderful.launcher.data.GestureSlot
 import com.wonderful.launcher.data.TapEffect
+import com.wonderful.launcher.data.ChargeStyle
 import com.wonderful.launcher.data.TrailStyle
 import android.os.Build
 import com.wonderful.launcher.data.Migration
@@ -106,6 +107,8 @@ private enum class Tab(val label: String) {
     BUTTONS("ボタン"),
     LOOK("見た目"),
     EFFECTS("エフェクト"),
+    CHARGE("充電"),
+    PERFORMANCE("軽量化"),
     WALLPAPER("壁紙"),
     CLOCK("時計"),
     SEARCH("検索"),
@@ -170,6 +173,8 @@ fun SettingsPanel(
                         Tab.BUTTONS -> ButtonsTab(s, update)
                         Tab.LOOK -> LookTab(s, update)
                         Tab.EFFECTS -> EffectsTab(s, update)
+                        Tab.CHARGE -> ChargeTab(s, update, vm)
+                        Tab.PERFORMANCE -> PerformanceTab(s, update)
                         Tab.WALLPAPER -> WallpaperTab(s, update)
                         Tab.CLOCK -> ClockTab(s, update)
                         Tab.SEARCH -> SearchTab(s, update)
@@ -330,6 +335,10 @@ private fun ButtonsTab(s: LauncherSettings, u: Update) {
     SliderSetting("球体からの距離", s.cornerSpread, 0.6f..1.4f, format = ::pct) { v -> u { it.copy(cornerSpread = v) } }
     SwitchSetting("ラベル表示", s.cornerLabels) { v -> u { it.copy(cornerLabels = v) } }
     SwitchSetting("ふわふわ浮遊", s.cornerFloat) { v -> u { it.copy(cornerFloat = v) } }
+    if (s.cornerFloat) {
+        SliderSetting("浮遊の幅", s.cornerFloatAmount, 0.05f..1f, format = { "%.0fdp".format(it * 8f) }) { v -> u { it.copy(cornerFloatAmount = v) } }
+        SliderSetting("浮遊の速さ", s.cornerFloatSpeed, 0.2f..3f, format = { "x%.1f".format(it) }) { v -> u { it.copy(cornerFloatSpeed = v) } }
+    }
     SwitchSetting("グロー（発光）", s.cornerGlow) { v -> u { it.copy(cornerGlow = v) } }
 }
 
@@ -372,6 +381,53 @@ private fun LookTab(s: LauncherSettings, u: Update) {
     SliderSetting("アニメーション速度", s.animSpeed, 0.25f..3f, format = { "x%.2f".format(it) }) { v -> u { it.copy(animSpeed = v) } }
     SliderSetting("パネルの不透明度", s.panelOpacity, 0.4f..1f, format = ::pct) { v -> u { it.copy(panelOpacity = v) } }
     SwitchSetting("Win95風ウィンドウ枠", s.windowChrome, "タイトルバーに _ □ ✕ ボタン") { v -> u { it.copy(windowChrome = v) } }
+}
+
+@Composable
+private fun ChargeTab(s: LauncherSettings, u: Update, vm: LauncherViewModel) {
+    val p = LocalPalette.current
+    SectionHeader("充電アニメーション")
+    SwitchSetting("充電を始めた時にアニメーション", s.chargeAnim, "ホーム画面を表示している時に電源をつなぐと再生") { v -> u { it.copy(chargeAnim = v) } }
+    ChoiceSetting("スタイル", ChargeStyle.entries, s.chargeStyle, { it.label }) { v -> u { it.copy(chargeStyle = v) } }
+    SliderSetting("表示する時間", s.chargeDurationSec, 1f..10f, "画面をタップすると途中で閉じます", format = { "%.1f秒".format(it) }) { v -> u { it.copy(chargeDurationSec = v) } }
+    SwitchSetting("電源を外した時も表示", s.chargeOnUnplug) { v -> u { it.copy(chargeOnUnplug = v) } }
+    SwitchSetting("振動", s.chargeHaptic) { v -> u { it.copy(chargeHaptic = v) } }
+    ActionSetting("今すぐ試す", "PREVIEW", color = p.mint) { vm.previewCharge() }
+}
+
+@Composable
+private fun PerformanceTab(s: LauncherSettings, u: Update) {
+    val p = LocalPalette.current
+    SectionHeader("軽量モード")
+    SwitchSetting(
+        "軽量モード", s.liteMode,
+        "ぼかし・残像・光の粒・虹色グロー・浮遊・画面エフェクト・ボタンの浮遊を止め、30fps に抑えます。OFF に戻すと元の設定に戻ります",
+    ) { v -> u { it.copy(liteMode = v) } }
+
+    SectionHeader("フレームレート")
+    ChoiceSetting(
+        "最大フレームレート", listOf(0, 60, 45, 30, 20, 15), s.fpsLimit,
+        { if (it == 0) "制限なし" else "${it}fps" },
+        "下げるほど電池と発熱が楽になります（球体・壁紙・エフェクトのアニメーション）",
+    ) { v -> u { it.copy(fpsLimit = v) } }
+
+    SectionHeader("放置したら止める")
+    SliderSetting(
+        "操作しない時に止めるまで", s.idleSleepSec, 0f..300f,
+        "動く壁紙・自動回転・画面エフェクトを止めます。触ればすぐ再開",
+        format = { if (it < 1f) "止めない" else "${it.toInt()}秒" },
+    ) { v -> u { it.copy(idleSleepSec = if (v < 1f) 0f else v) } }
+
+    SectionHeader("重くなりやすい設定")
+    RetroLabel("ボタンで個別に軽くできます", size = 11.sp, color = p.text.copy(alpha = 0.6f))
+    ActionSetting("動く壁紙 → グラデーションに", "軽く", "今: ${s.wallpaperType.label}", color = p.cyan) {
+        u { it.copy(wallpaperType = WallpaperType.GRADIENT, gradientAnimate = false) }
+    }
+    ActionSetting("奥のアイコンのぼかし", if (s.dofBlur > 0f) "OFF" else "OFF済", color = p.cyan) { u { it.copy(dofBlur = 0f) } }
+    ActionSetting("ワイヤーフレーム", if (s.wireframe) "OFF" else "OFF済", color = p.cyan) { u { it.copy(wireframe = false) } }
+    ActionSetting("ネオングロー", if (s.iconGlow) "OFF" else "OFF済", color = p.cyan) { u { it.copy(iconGlow = false) } }
+    ActionSetting("走査線・ビネット", if (s.scanlines || s.vignette) "OFF" else "OFF済", color = p.cyan) { u { it.copy(scanlines = false, vignette = false) } }
+    SliderSetting("球体のアプリ数の上限", s.sphereMaxApps.toFloat(), 8f..200f, "少ないほど軽い", format = { "${it.toInt()}" }) { v -> u { it.copy(sphereMaxApps = v.toInt()) } }
 }
 
 @Composable

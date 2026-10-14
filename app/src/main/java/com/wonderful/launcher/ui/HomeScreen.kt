@@ -13,6 +13,17 @@ import com.wonderful.launcher.data.WallpaperType
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import android.os.SystemClock
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import com.wonderful.launcher.data.effective
+import kotlinx.coroutines.delay
+import com.wonderful.launcher.ui.wallpaper.ChargeEvent
+import com.wonderful.launcher.ui.wallpaper.ChargeListener
+import com.wonderful.launcher.ui.wallpaper.ChargingOverlay
+import com.wonderful.launcher.ui.wallpaper.batteryLevel
 import com.wonderful.launcher.data.GestureSlot
 import com.wonderful.launcher.data.actionFor
 import com.wonderful.launcher.ui.components.SwipeDir
@@ -97,8 +108,19 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
     val menuApp by vm.menuApp.collectAsStateWithLifecycle()
     val recent by vm.recent.collectAsStateWithLifecycle()
     val badges by vm.badges.collectAsStateWithLifecycle()
-    val s = data.settings
+    // 描画には軽量モードを反映した設定を使う（保存されている設定はそのまま）
+    val s = data.settings.effective()
     val context = LocalContext.current
+
+    // しばらく触らなかったら動く壁紙と自動回転を止める（軽量化）
+    var lastTouch by remember { mutableLongStateOf(SystemClock.uptimeMillis()) }
+    var idle by remember { mutableStateOf(false) }
+    LaunchedEffect(s.idleSleepSec) {
+        while (true) {
+            idle = s.idleSleepSec > 0f && SystemClock.uptimeMillis() - lastTouch > (s.idleSleepSec * 1000).toLong()
+            delay(1000)
+        }
+    }
 
     RetroTheme(s) {
         val p = LocalPalette.current
@@ -142,6 +164,13 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             }
         }
 
+        // 充電アニメーション
+        var chargeEvent by remember { mutableStateOf<ChargeEvent?>(null) }
+        ChargeListener(s.chargeAnim) { e -> if (e.plugged || s.chargeOnUnplug) chargeEvent = e }
+        LaunchedEffect(vm) {
+            vm.chargePreview.collect { chargeEvent = ChargeEvent(true, batteryLevel(context)) }
+        }
+
         // ホーム画面でホームボタン
         val onHomeButton by rememberUpdatedState { runGesture(GestureSlot.HOME_BUTTON) }
         LaunchedEffect(vm) {
@@ -157,7 +186,20 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             if (menuApp != null) vm.showMenu(null) else vm.closePanel()
         }
 
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    // 触れたことだけ記録して、タッチはそのまま下へ流す
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent(PointerEventPass.Initial)
+                            lastTouch = SystemClock.uptimeMillis()
+                            if (idle) idle = false
+                        }
+                    }
+                },
+        ) {
             val rootW = constraints.maxWidth.toFloat()
             val rootH = constraints.maxHeight.toFloat()
 
@@ -176,7 +218,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                         }
                     },
             ) {
-            WallpaperLayer(s, p, paused = panel != Panel.NONE)
+            WallpaperLayer(s, p, paused = panel != Panel.NONE || idle)
 
             // ── ホーム ──
             Column(Modifier.fillMaxSize().systemBarsPadding()) {
@@ -215,7 +257,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                         settings = s,
                         palette = p,
                         // 設定画面は半透明なので、後ろの球体で変更をその場で確認できるよう止めない
-                        paused = panel != Panel.NONE && panel != Panel.SETTINGS,
+                        paused = (panel != Panel.NONE && panel != Panel.SETTINGS) || idle,
                         spinRequests = spinRequests,
                         resetRequests = resetRequests,
                         badges = badges,
@@ -352,7 +394,8 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                 }
             }
 
-            ScreenEffects(s, p, paused = false)
+            ScreenEffects(s, p, paused = idle)
+            ChargingOverlay(chargeEvent, s, p) { chargeEvent = null }
             CrtOverlay(s)
         }
     }

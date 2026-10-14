@@ -57,6 +57,7 @@ import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.sin
 import com.wonderful.launcher.data.LauncherSettings
+import com.wonderful.launcher.ui.theme.FrameGate
 import com.wonderful.launcher.ui.theme.RetroPalette
 import kotlinx.coroutines.isActive
 import kotlin.math.max
@@ -123,7 +124,9 @@ fun SphereView(
     }
 
     // フレームループ
+    val gate = remember { FrameGate() }
     LaunchedEffect(engine) {
+        var skipped = false
         var last = withFrameNanos { it }
         while (isActive) {
             withFrameNanos { now ->
@@ -132,7 +135,19 @@ fun SphereView(
                 if (currentPaused) return@withFrameNanos
                 val moved = engine.step(dt, currentSettings, currentSettings.entranceAnim)
                 fx.advance(dt)
-                if (moved || fx.needsFrames(currentSettings)) frame.intValue++
+                // 物理は毎フレーム進めるが、描き直しはフレームレート制限に合わせて間引く
+                if (moved || fx.needsFrames(currentSettings)) {
+                    if (gate.add(dt, currentSettings.fpsLimit)) {
+                        gate.consume()
+                        frame.intValue++
+                        skipped = false
+                    } else skipped = true
+                } else if (skipped) {
+                    // 間引いたまま止まった時は、最後の位置を必ず描く
+                    gate.consume()
+                    frame.intValue++
+                    skipped = false
+                }
             }
         }
     }

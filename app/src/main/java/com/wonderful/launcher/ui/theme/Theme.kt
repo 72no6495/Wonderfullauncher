@@ -98,6 +98,22 @@ val LocalPalette = staticCompositionLocalOf { paletteOf(PalettePreset.VAPORWAVE)
 val LocalSettings = staticCompositionLocalOf { LauncherSettings() }
 val LocalRetroFont = staticCompositionLocalOf<FontFamily> { FontFamily.Monospace }
 
+/** 描画の最大フレームレート（0 = 制限なし）。軽量化の設定から */
+val LocalFpsLimit = staticCompositionLocalOf { 0 }
+
+/**
+ * フレームレート制限。毎フレーム dt を足していき、1 コマぶん貯まったら true を返す。
+ * 返した時の合計時間は [consume] で受け取る。
+ */
+class FrameGate {
+    private var acc = 0f
+    fun add(dt: Float, fps: Int): Boolean {
+        acc += dt
+        return fps <= 0 || acc >= 1f / fps - 0.002f
+    }
+    fun consume(): Float { val v = acc; acc = 0f; return v }
+}
+
 fun fontOf(style: FontStyle): FontFamily = when (style) {
     FontStyle.MONO -> FontFamily.Monospace
     FontStyle.SANS -> FontFamily.SansSerif
@@ -127,6 +143,7 @@ fun RetroTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
         LocalPalette provides p,
         LocalSettings provides settings,
         LocalRetroFont provides fontOf(settings.fontStyle),
+        LocalFpsLimit provides settings.fpsLimit,
     ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }

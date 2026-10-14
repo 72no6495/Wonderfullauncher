@@ -108,7 +108,13 @@ object Migration {
                 stepMs = s.life.stepMs.finiteIn(16f, 2000f, 110f),
                 density = s.life.density.finiteIn(0.01f, 0.95f, 0.28f),
                 maxGenerations = s.life.maxGenerations.coerceIn(50, 100000),
+                hudMarginDp = s.life.hudMarginDp.finiteIn(0f, 400f, 130f),
             ),
+            cornerFloatAmount = s.cornerFloatAmount.finiteIn(0f, 1f, 0.5f),
+            cornerFloatSpeed = s.cornerFloatSpeed.finiteIn(0.2f, 3f, 1f),
+            chargeDurationSec = s.chargeDurationSec.finiteIn(1f, 10f, 3.5f),
+            fpsLimit = if (s.fpsLimit in listOf(0, 15, 20, 30, 45, 60)) s.fpsLimit else 0,
+            idleSleepSec = s.idleSleepSec.finiteIn(0f, 600f, 0f),
             matrix = s.matrix.copy(charSizeDp = s.matrix.charSizeDp.finiteIn(8f, 48f, 18f)),
             starfield = s.starfield.copy(count = s.starfield.count.coerceIn(10, 1500)),
             underwater = s.underwater.copy(bubbles = s.underwater.bubbles.coerceIn(0, 300), fish = s.underwater.fish.coerceIn(0, 40)),
@@ -238,3 +244,23 @@ object BackupCodec {
     private fun <T> readable(serializer: kotlinx.serialization.KSerializer<T>, element: JsonElement): Boolean =
         runCatching { json.decodeFromJsonElement(serializer, element) }.isSuccess
 }
+
+/**
+ * 実際の描画に使う設定。軽量モードの時は重い演出をまとめて OFF にする
+ * （保存されている設定そのものは変えないので、軽量モードを切ると元に戻る）。
+ */
+fun LauncherSettings.effective(): LauncherSettings = if (!liteMode) this else copy(
+    dofBlur = 0f,
+    panelBlur = false,
+    wallpaperBlur = 0f,
+    trailLength = 0f,
+    tapParticles = false,
+    rainbowGlow = false,
+    glowPulse = false,
+    iconFloat = 0f,
+    filmGrain = 0f,
+    vhsTracking = false,
+    glitchOverlay = false,
+    cornerFloat = false,
+    fpsLimit = if (fpsLimit == 0 || fpsLimit > 30) 30 else fpsLimit,
+)

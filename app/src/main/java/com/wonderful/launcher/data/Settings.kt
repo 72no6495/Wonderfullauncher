@@ -212,6 +212,10 @@ data class LifeConfig(
     val glow: Boolean = true,
     val gridLines: Boolean = false,
     val hud: Boolean = true,
+    /** 情報表示の位置（時計と重ならないよう変えられる） */
+    val hudCorner: ScreenCorner = ScreenCorner.BOTTOM_LEFT,
+    /** 端からの距離（dp） */
+    val hudMarginDp: Float = 130f,
     val seed: LifeSeed = LifeSeed.RANDOM,
     val autoReseed: Boolean = true,
     val maxGenerations: Int = 600,
@@ -219,6 +223,22 @@ data class LifeConfig(
     /** 何もない所をタップするとセルを置ける */
     val touch: Boolean = true,
 )
+
+/** 画面上の表示位置 */
+enum class ScreenCorner(val label: String) {
+    TOP_LEFT("左上"),
+    TOP_RIGHT("右上"),
+    BOTTOM_LEFT("左下"),
+    BOTTOM_RIGHT("右下"),
+}
+
+/** 充電を始めた時のアニメーション */
+enum class ChargeStyle(val label: String) {
+    BATTERY("ネオン電池"),
+    RING("リング"),
+    LIGHTNING("稲妻"),
+    WAVE("液体"),
+}
 
 /** アイコンをタップした時の動き */
 enum class TapEffect(val label: String) {
@@ -296,6 +316,13 @@ enum class WidgetKind(val label: String) {
     CLOCK("レトロ時計"),
     BATTERY("バッテリー"),
     NOTE("メモ"),
+    MEMORY("メモリ"),
+    CPU("CPU"),
+    TEMPERATURE("温度"),
+    STORAGE("ストレージ"),
+    NETWORK("通信速度"),
+    BOOST("メモリ解放"),
+    SYSMON("システムモニター"),
 }
 
 enum class PalettePreset(val label: String) {
@@ -379,6 +406,8 @@ data class LauncherSettings(
     val cornerSpread: Float = 1f,
     val cornerLabels: Boolean = true,
     val cornerFloat: Boolean = true,
+    val cornerFloatAmount: Float = 0.5f,
+    val cornerFloatSpeed: Float = 1f,
     val cornerGlow: Boolean = true,
 
     // ── 見た目 ──
@@ -497,6 +526,21 @@ data class LauncherSettings(
     val filmGrain: Float = 0f,
     val vhsTracking: Boolean = false,
     val glitchOverlay: Boolean = false,
+
+    // ── 充電アニメーション ──
+    val chargeAnim: Boolean = true,
+    val chargeStyle: ChargeStyle = ChargeStyle.BATTERY,
+    val chargeDurationSec: Float = 3.5f,
+    val chargeOnUnplug: Boolean = false,
+    val chargeHaptic: Boolean = true,
+
+    // ── 軽量化 ──
+    /** ぼかし・残像・粒・画面エフェクトなど重い演出をまとめて止める */
+    val liteMode: Boolean = false,
+    /** 描画の最大フレームレート（0 = 制限なし） */
+    val fpsLimit: Int = 0,
+    /** 何秒操作しないと動く壁紙と自動回転を止めるか（0 = 止めない） */
+    val idleSleepSec: Float = 0f,
 
     // ── ウィジェット画面 ──
     val widgetFrame: Boolean = true,

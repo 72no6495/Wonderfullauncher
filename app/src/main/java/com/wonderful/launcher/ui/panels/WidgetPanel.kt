@@ -254,6 +254,13 @@ private fun WidgetCell(
                 WidgetKind.CLOCK -> ClockWidget(item)
                 WidgetKind.BATTERY -> BatteryWidget()
                 WidgetKind.NOTE -> NoteWidget(item, enabled = !editing) { text -> vm.updateWidget(item.id) { it.copy(text = text) } }
+                WidgetKind.MEMORY -> MemoryWidget(item)
+                WidgetKind.CPU -> CpuWidget(item)
+                WidgetKind.TEMPERATURE -> TemperatureWidget(item)
+                WidgetKind.STORAGE -> StorageWidget()
+                WidgetKind.NETWORK -> NetworkWidget(item)
+                WidgetKind.BOOST -> BoostWidget(vm)
+                WidgetKind.SYSMON -> SysMonWidget(item)
             }
         }
 
@@ -498,6 +505,8 @@ private fun NoteWidget(item: WidgetItem, enabled: Boolean, onChange: (String) ->
 // 追加画面
 // ─────────────────────────────────────────────
 
+private data class BuiltinSpec(val label: String, val glyph: Glyph, val kind: WidgetKind, val w: Int, val h: Int)
+
 private data class ProviderEntry(val info: AppWidgetProviderInfo, val label: String, val appLabel: String)
 
 @Composable
@@ -535,11 +544,27 @@ private fun WidgetPicker(
         ) {
             if (q.isEmpty()) {
                 item { RetroLabel("// 内蔵ウィジェット", color = p.cyan, size = 12.sp) }
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BuiltinTile("レトロ時計", Glyph.RECENT, Modifier.weight(1f)) { onPickBuiltin(WidgetKind.CLOCK, 8, 3) }
-                        BuiltinTile("バッテリー", Glyph.STAR, Modifier.weight(1f)) { onPickBuiltin(WidgetKind.BATTERY, 4, 2) }
-                        BuiltinTile("メモ", Glyph.EDIT, Modifier.weight(1f)) { onPickBuiltin(WidgetKind.NOTE, 4, 4) }
+                // (表示名, アイコン, 種類, 幅, 高さ)
+                val builtins = listOf(
+                    BuiltinSpec("レトロ時計", Glyph.RECENT, WidgetKind.CLOCK, 8, 3),
+                    BuiltinSpec("バッテリー", Glyph.STAR, WidgetKind.BATTERY, 4, 2),
+                    BuiltinSpec("メモ", Glyph.EDIT, WidgetKind.NOTE, 4, 4),
+                    BuiltinSpec("システム\nモニター", Glyph.WIDGETS, WidgetKind.SYSMON, 8, 4),
+                    BuiltinSpec("メモリ", Glyph.WIDGETS, WidgetKind.MEMORY, 4, 3),
+                    BuiltinSpec("CPU", Glyph.SETTINGS, WidgetKind.CPU, 4, 3),
+                    BuiltinSpec("温度", Glyph.STAR, WidgetKind.TEMPERATURE, 4, 3),
+                    BuiltinSpec("ストレージ", Glyph.FOLDER, WidgetKind.STORAGE, 4, 2),
+                    BuiltinSpec("通信速度", Glyph.SEARCH, WidgetKind.NETWORK, 4, 3),
+                    BuiltinSpec("メモリ解放", Glyph.PLUS, WidgetKind.BOOST, 4, 3),
+                )
+                builtins.chunked(3).forEach { row ->
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { b ->
+                                BuiltinTile(b.label, b.glyph, Modifier.weight(1f)) { onPickBuiltin(b.kind, b.w, b.h) }
+                            }
+                            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                        }
                     }
                 }
                 item { RetroLabel("// アプリのウィジェット", color = p.cyan, size = 12.sp) }
@@ -583,7 +608,7 @@ private fun BuiltinTile(label: String, glyph: Glyph, modifier: Modifier, onClick
     ) {
         RetroGlyph(glyph, p.yellow, Modifier.size(30.dp))
         Spacer(Modifier.height(6.dp))
-        RetroLabel(label, size = 12.sp)
+        RetroLabel(label, size = 12.sp, maxLines = 2, align = androidx.compose.ui.text.style.TextAlign.Center)
     }
 }
 

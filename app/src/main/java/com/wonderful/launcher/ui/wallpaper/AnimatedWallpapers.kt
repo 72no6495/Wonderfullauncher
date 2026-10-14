@@ -41,6 +41,9 @@ import com.wonderful.launcher.data.LifeConfig
 import com.wonderful.launcher.data.LifeSeed
 import com.wonderful.launcher.data.MazeGenerator
 import com.wonderful.launcher.data.MazeSolver
+import com.wonderful.launcher.data.ScreenCorner
+import com.wonderful.launcher.ui.theme.FrameGate
+import com.wonderful.launcher.ui.theme.LocalFpsLimit
 import com.wonderful.launcher.ui.theme.RetroPalette
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.isActive
@@ -61,13 +64,16 @@ fun rememberSceneTime(speed: Float, paused: Boolean): State<Float> {
     val time = remember { mutableFloatStateOf(0f) }
     val currentSpeed by rememberUpdatedState(speed)
     val currentPaused by rememberUpdatedState(paused)
+    val fps by rememberUpdatedState(LocalFpsLimit.current)
+    val gate = remember { FrameGate() }
     LaunchedEffect(Unit) {
         var last = withFrameNanos { it }
         while (isActive) {
             withFrameNanos { now ->
                 val dt = ((now - last) / 1_000_000_000f).coerceIn(0f, 0.1f)
                 last = now
-                if (!currentPaused) time.floatValue += dt * currentSpeed
+                // 状態を更新した時だけ再描画されるので、ここで間引けばフレームレートが下がる
+                if (!currentPaused && gate.add(dt, fps)) time.floatValue += gate.consume() * currentSpeed
             }
         }
     }
@@ -454,13 +460,17 @@ fun MazeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
         val speed by rememberUpdatedState(s.sceneSpeed())
         val config by rememberUpdatedState(cfg)
         val isPaused by rememberUpdatedState(paused)
+        val fps by rememberUpdatedState(LocalFpsLimit.current)
         LaunchedEffect(sim) {
+            val gate = FrameGate()
             var last = withFrameNanos { it }
             while (isActive) {
                 withFrameNanos { now ->
                     val dt = ((now - last) / 1e9f).coerceIn(0f, 0.1f)
                     last = now
-                    if (!isPaused && sim.update(dt * speed, config.genSpeed, config.solveSpeed, config.holdSec)) tick.intValue++
+                    if (!isPaused && gate.add(dt, fps) &&
+                        sim.update(gate.consume().coerceAtMost(0.1f) * speed, config.genSpeed, config.solveSpeed, config.holdSec)
+                    ) tick.intValue++
                 }
             }
         }
@@ -935,16 +945,18 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
         val speed by rememberUpdatedState(s.sceneSpeed())
         val config by rememberUpdatedState(cfg)
         val isPaused by rememberUpdatedState(paused)
+        val fps by rememberUpdatedState(LocalFpsLimit.current)
         // ルールや初期配置を変えたら作り直す
         LaunchedEffect(sim, cfg.rule) { sim.setRule(cfg.rule.birth, cfg.rule.survive) }
         LaunchedEffect(sim, cfg.seed, cfg.density) { sim.seed(cfg) }
         LaunchedEffect(sim) {
+            val gate = FrameGate()
             var last = withFrameNanos { it }
             while (isActive) {
                 withFrameNanos { now ->
                     val dt = ((now - last) / 1e9f).coerceIn(0f, 0.1f)
                     last = now
-                    if (!isPaused && sim.update(dt * speed, config)) tick.intValue++
+                    if (!isPaused && gate.add(dt, fps) && sim.update(gate.consume().coerceAtMost(0.1f) * speed, config)) tick.intValue++
                 }
             }
         }
@@ -1018,13 +1030,26 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
     }
 }
 
-/** 世代数・人口・ルールと人口グラフ */
+/** 世代数・人口・ルールと人口グラフ（位置は設定で四隅から選べる） */
 private fun DrawScope.drawLifeHud(sim: LifeSim, cfg: LifeConfig, p: RetroPalette, paint: Paint) {
-    val x0 = 14.dp.toPx()
-    val y0 = 52.dp.toPx()
+    val pad = 8.dp.toPx()
     val gw = 120.dp.toPx()
     val gh = 34.dp.toPx()
-    drawRoundRect(Color.Black.copy(alpha = 0.45f), Offset(x0 - 8.dp.toPx(), y0 - 18.dp.toPx()), Size(gw + 16.dp.toPx(), gh + 46.dp.toPx()), CornerRadius(8.dp.toPx()))
+    val boxW = gw + pad * 2
+    val boxH = gh + 46.dp.toPx()
+    val side = 14.dp.toPx()
+    val margin = cfg.hudMarginDp.dp.toPx()
+    val left = when (cfg.hudCorner) {
+        ScreenCorner.TOP_LEFT, ScreenCorner.BOTTOM_LEFT -> side - pad
+        else -> size.width - side - boxW + pad
+    }
+    val top = when (cfg.hudCorner) {
+        ScreenCorner.TOP_LEFT, ScreenCorner.TOP_RIGHT -> margin
+        else -> size.height - margin - boxH
+    }.coerceIn(0f, (size.height - boxH).coerceAtLeast(0f))
+    val x0 = left + pad
+    val y0 = top + 18.dp.toPx()
+    drawRoundRect(Color.Black.copy(alpha = 0.45f), Offset(left, top), Size(boxW, boxH), CornerRadius(8.dp.toPx()))
     drawIntoCanvas { cv ->
         paint.textSize = 11.dp.toPx()
         paint.color = p.cyan.toArgb()
@@ -1036,10 +1061,10 @@ private fun DrawScope.drawLifeHud(sim: LifeSim, cfg: LifeConfig, p: RetroPalette
     if (n > 1) {
         val maxV = (0 until n).maxOf { sim.history[it] }.coerceAtLeast(1)
         val path = Path()
-        val top = y0 + 20.dp.toPx()
+        val gTop = y0 + 20.dp.toPx()
         for (k in 0 until n) {
             val px = x0 + gw * k / (sim.history.size - 1)
-            val py = top + gh - gh * sim.history[k] / maxV
+            val py = gTop + gh - gh * sim.history[k] / maxV
             if (k == 0) path.moveTo(px, py) else path.lineTo(px, py)
         }
         drawPath(path, p.yellow, style = Stroke(1.5.dp.toPx()))

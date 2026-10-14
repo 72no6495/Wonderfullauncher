@@ -139,6 +139,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 設定画面からの「充電アニメーションを試す」 */
+    private val _chargePreview = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val chargePreview: SharedFlow<Unit> = _chargePreview.asSharedFlow()
+    fun previewCharge() { _chargePreview.tryEmit(Unit) }
+
     // ── 設定画面の表示位置（閉じても次に開いた時に同じ所から） ──
     var settingsTab by mutableIntStateOf(0)
     var settingsTabRowScroll = 0
