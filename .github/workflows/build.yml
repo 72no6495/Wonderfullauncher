@@ -2,6 +2,7 @@ name: Build APK
 
 on:
   push:
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -17,9 +18,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Backup compatibility tests
         run: ./gradlew testDebugUnitTest --stacktrace
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build debug and release APKs
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: wonderful-launcher-debug
           path: app/build/outputs/apk/debug/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wonderful-launcher-release
+          path: app/build/outputs/apk/release/*.apk
