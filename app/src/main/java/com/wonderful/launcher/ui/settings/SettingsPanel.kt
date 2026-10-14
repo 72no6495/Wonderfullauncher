@@ -305,6 +305,7 @@ private fun SphereTab(s: LauncherSettings, u: Update, vm: LauncherViewModel, onR
     SectionHeader("操作とアニメーション")
     SwitchSetting("ピンチで拡大縮小", s.pinchToZoom) { v -> u { it.copy(pinchToZoom = v) } }
     ChoiceSetting("タップした時の動き", TapEffect.entries, s.tapEffect, { it.label }) { v -> u { it.copy(tapEffect = v) } }
+    SwitchSetting("タップで光の粒（パーティクル）", s.tapParticles, "OFF にするとアプリをタップしても粒が出なくなります") { v -> u { it.copy(tapParticles = v) } }
     SwitchSetting("起動時ズームアニメ", s.launchZoom, "アイコンからアプリが広がる") { v -> u { it.copy(launchZoom = v) } }
     SwitchSetting("出現アニメーション", s.entranceAnim, "アプリ追加時に中心から飛び出す") { v -> u { it.copy(entranceAnim = v) } }
     SwitchSetting("振動フィードバック", s.haptics) { v -> u { it.copy(haptics = v) } }
@@ -391,7 +392,7 @@ private fun EffectsTab(s: LauncherSettings, u: Update) {
         SwitchSetting("ボタンやアイコンも弾ませる", s.rubberButtons, "四隅のボタン・ドック・一覧のアイコン") { v -> u { it.copy(rubberButtons = v) } }
     }
     ChoiceSetting("タップした時の動き", TapEffect.entries, s.tapEffect, { it.label }) { v -> u { it.copy(tapEffect = v) } }
-    SwitchSetting("タップで火花", s.tapParticles, "アイコンから光の粒が飛び散る") { v -> u { it.copy(tapParticles = v) } }
+    SwitchSetting("タップで光の粒（パーティクル）", s.tapParticles, "OFF にするとアプリをタップしても粒が出なくなります") { v -> u { it.copy(tapParticles = v) } }
 
     SectionHeader("ぼかし")
     if (!blurOk) RetroLabel("※ ぼかしは Android 12 以降で使えます", size = 11.sp, color = p.yellow)

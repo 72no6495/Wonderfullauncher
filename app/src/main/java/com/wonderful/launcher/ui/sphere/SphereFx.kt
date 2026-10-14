@@ -203,6 +203,12 @@ class SphereFx {
         particlesAlive = true
     }
 
+    /** 飛んでいる粒をすぐに消す */
+    fun clearParticles() {
+        pLife.fill(0f)
+        particlesAlive = false
+    }
+
     inline fun forEachParticle(block: (x: Float, y: Float, life: Float, color: Color) -> Unit) {
         for (j in 0 until particleCap) {
             val life = particleLife(j)

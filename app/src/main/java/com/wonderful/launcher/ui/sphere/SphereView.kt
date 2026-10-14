@@ -110,6 +110,9 @@ fun SphereView(
     LaunchedEffect(spinRequests) {
         if (spinRequests > 0) engine.spin(5f)
     }
+    LaunchedEffect(settings.tapParticles) {
+        if (!settings.tapParticles) { fx.clearParticles(); frame.intValue++ }
+    }
     LaunchedEffect(resetRequests) {
         if (resetRequests > 0) engine.reset()
     }
