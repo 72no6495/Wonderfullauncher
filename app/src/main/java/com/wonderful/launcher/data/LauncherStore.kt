@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
-import kotlinx.serialization.json.Json
 import java.io.File
 
 /**
@@ -41,35 +40,39 @@ class LauncherStore(context: Context, scope: CoroutineScope) {
     /** 画面を離れる時などに即時保存する（IO スレッドから呼ぶ） */
     fun flush() = save(_data.value)
 
-    fun exportJson(): String = json.encodeToString(LauncherData.serializer(), _data.value)
+    fun exportJson(): String = BackupCodec.encode(_data.value)
 
-    /** バックアップから復元。失敗したら false */
+    /**
+     * バックアップから復元。失敗したら false。
+     * どの古いバージョンのバックアップでも [Migration] を通して今の形式にそろえる。
+     */
     fun importJson(text: String): Boolean = runCatching {
-        val imported = json.decodeFromString(LauncherData.serializer(), text)
-        _data.value = imported
+        _data.value = decode(text)
     }.isSuccess
 
     fun resetSettings() = _data.update { it.copy(settings = LauncherSettings()) }
 
-    private fun load(): LauncherData = runCatching {
-        if (file.exists()) json.decodeFromString(LauncherData.serializer(), file.readText())
-        else LauncherData()
-    }.getOrElse { LauncherData() }
+    private fun load(): LauncherData {
+        if (!file.exists()) return fresh()
+        return runCatching { decode(file.readText()) }.getOrElse {
+            // 読めなかったファイルは消さずに退避しておく（データを失わないため）
+            runCatching { file.copyTo(File(file.parentFile, file.name + ".broken"), overwrite = true) }
+            fresh()
+        }
+    }
 
     private fun save(d: LauncherData) {
         runCatching {
             val tmp = File(file.parentFile, file.name + ".tmp")
-            tmp.writeText(json.encodeToString(LauncherData.serializer(), d))
+            tmp.writeText(BackupCodec.encode(d))
             tmp.renameTo(file)
         }
     }
 
     companion object {
-        val json = Json {
-            ignoreUnknownKeys = true
-            encodeDefaults = true
-            coerceInputValues = true
-            prettyPrint = false
-        }
+        /** 新規インストール時の状態 */
+        fun fresh() = LauncherData(dataVersion = Migration.CURRENT_VERSION)
+
+        fun decode(text: String): LauncherData = BackupCodec.decode(text)
     }
 }

@@ -19,8 +19,19 @@ import com.wonderful.launcher.data.RecentEntry
 import com.wonderful.launcher.data.RecentSource
 import com.wonderful.launcher.data.SortOrder
 import com.wonderful.launcher.data.SystemActions
+import com.wonderful.launcher.data.GestureAction
+import com.wonderful.launcher.data.Migration
+import com.wonderful.launcher.data.WIDGET_COLUMNS
+import com.wonderful.launcher.data.WidgetItem
+import com.wonderful.launcher.data.WidgetKind
+import com.wonderful.launcher.data.WidgetManager
+import com.wonderful.launcher.data.findFreeSpot
+import com.wonderful.launcher.system.BadgeListenerService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,7 +45,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import kotlin.random.Random
 
-enum class Panel { NONE, SEARCH, SETTINGS, RECENT, FOLDERS }
+enum class Panel { NONE, SEARCH, SETTINGS, RECENT, FOLDERS, WIDGETS }
 
 data class RecentItem(val app: AppInfo, val time: Long)
 
@@ -43,6 +54,10 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     private val ctx get() = getApplication<Application>()
     val store = LauncherStore(app, viewModelScope)
     val repo = AppRepository(app, viewModelScope)
+    val widgets = WidgetManager(app)
+
+    /** パッケージ名 → 通知件数（通知へのアクセスが許可されている時だけ入る） */
+    val badges: StateFlow<Map<String, Int>> = BadgeListenerService.counts
 
     val data: StateFlow<LauncherData> = store.data
     val apps: StateFlow<List<AppInfo>> = repo.apps
@@ -63,8 +78,8 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     val recent = _recent.asStateFlow()
 
     /** HOME ボタンが押された回数。スフィアのリセットに使う */
-    private val _homePresses = MutableStateFlow(0)
-    val homePresses = _homePresses.asStateFlow()
+    private val _homePresses = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val homePresses: SharedFlow<Unit> = _homePresses.asSharedFlow()
 
     /** スフィアに並ぶアプリ（並び順反映済み） */
     val sphereApps: StateFlow<List<AppInfo>> = combine(apps, data) { all, d ->
@@ -85,6 +100,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             .launchIn(viewModelScope)
 
         // 初回起動時はスフィアとドックに初期アプリを入れる
+        // 保存データに無いウィジェット ID を解放
+        widgets.releaseOrphans(data.value.widgets.mapTo(HashSet()) { it.appWidgetId })
+
         apps.onEach { list ->
             if (list.isNotEmpty() && !data.value.sphereInitialized) initDefaults(list)
         }.launchIn(viewModelScope)
@@ -138,7 +156,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         _menuApp.value = null
         when {
             _panel.value != Panel.NONE -> _panel.value = Panel.NONE
-            alreadyHome -> _homePresses.value++ // ホームでもう一度押したら球体をスピン
+            alreadyHome -> _homePresses.tryEmit(Unit) // ホーム画面でさらにホームボタン → ジェスチャー
         }
     }
 
@@ -250,15 +268,72 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     fun removeFromFolder(folderId: String, key: String) = updateFolder(folderId) { it.copy(apps = it.apps - key) }
 
+    // ── ウィジェット ──
+
+    /** ウィジェットを空いている場所に置く */
+    fun addWidget(kind: WidgetKind, w: Int, h: Int, appWidgetId: Int = -1, provider: String = "") {
+        store.update { d ->
+            val ww = w.coerceIn(1, WIDGET_COLUMNS)
+            val hh = h.coerceIn(1, 24)
+            val (x, y) = findFreeSpot(d.widgets, ww, hh)
+            val item = WidgetItem(UUID.randomUUID().toString(), kind, appWidgetId, provider, x, y, ww, hh)
+            d.copy(widgets = d.widgets + item)
+        }
+    }
+
+    /** 別端末から復元したウィジェットなどを作り直した時に ID を差し替える */
+    fun replaceWidgetId(itemId: String, appWidgetId: Int, provider: String) {
+        val old = data.value.widgets.firstOrNull { it.id == itemId }?.appWidgetId
+        if (old != null && old != appWidgetId) widgets.deleteId(old)
+        updateWidget(itemId) { it.copy(appWidgetId = appWidgetId, provider = provider) }
+    }
+
+    fun updateWidget(id: String, transform: (WidgetItem) -> WidgetItem) = store.update { d ->
+        d.copy(widgets = d.widgets.map { if (it.id == id) transform(it) else it })
+    }
+
+    fun removeWidget(id: String) {
+        data.value.widgets.firstOrNull { it.id == id }?.let { widgets.deleteId(it.appWidgetId) }
+        store.update { d -> d.copy(widgets = d.widgets.filter { it.id != id }) }
+    }
+
+    fun clearWidgets() {
+        data.value.widgets.forEach { widgets.deleteId(it.appWidgetId) }
+        store.update { it.copy(widgets = emptyList()) }
+    }
+
     // ── 設定 ──
 
-    fun updateSettings(transform: (LauncherSettings) -> LauncherSettings) = store.updateSettings(transform)
+    fun updateSettings(transform: (LauncherSettings) -> LauncherSettings) = store.updateSettings { old ->
+        val new = transform(old)
+        // どの操作でも設定画面を開けなくなる変更は、長押しを「設定」にして防ぐ
+        if (Migration.settingsReachable(new)) new else new.copy(longPressAction = GestureAction.SETTINGS)
+    }
 
     fun resetSettings() = store.resetSettings()
 
     fun exportJson() = store.exportJson()
 
-    fun importJson(text: String) = store.importJson(text)
+    /**
+     * バックアップを読み込む。
+     * Android ウィジェットの ID は端末ごとに違うので、この端末で有効なものだけ残し、
+     * それ以外は「再設定」が必要な状態にする。
+     */
+    fun importJson(text: String): Boolean {
+        val before = data.value.widgets.mapNotNull { it.appWidgetId.takeIf { id -> id >= 0 } }.toSet()
+        if (!store.importJson(text)) return false
+        store.update { d ->
+            d.copy(widgets = d.widgets.map { w ->
+                if (w.kind != WidgetKind.SYSTEM || w.appWidgetId < 0) return@map w
+                val info = widgets.info(w.appWidgetId)
+                val valid = w.appWidgetId in before && info?.provider?.flattenToString() == w.provider
+                if (valid) w else w.copy(appWidgetId = -1)
+            })
+        }
+        val keep = data.value.widgets.mapTo(HashSet()) { it.appWidgetId }
+        before.filter { it !in keep }.forEach { widgets.deleteId(it) }
+        return true
+    }
 
     fun flush() {
         viewModelScope.launch(Dispatchers.IO) { store.flush() }

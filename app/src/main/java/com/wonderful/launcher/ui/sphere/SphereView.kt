@@ -9,6 +9,7 @@ import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -58,13 +59,15 @@ fun SphereView(
     settings: LauncherSettings,
     palette: RetroPalette,
     paused: Boolean,
-    homePresses: Int,
+    spinRequests: Int,
     resetRequests: Int,
+    badges: Map<String, Int>,
     onLaunch: (AppInfo, Rect, Bundle?) -> Unit,
     onLongPressApp: (AppInfo) -> Unit,
     onLongPressEmpty: () -> Unit,
     onDoubleTapEmpty: (() -> Unit)?,
     onSizeCommitted: (Float) -> Unit,
+    onTwoFingerSwipe: (up: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val engine = remember { SphereEngine() }
@@ -78,6 +81,7 @@ fun SphereView(
     val longPressEmptyCb by rememberUpdatedState(onLongPressEmpty)
     val doubleTapCb by rememberUpdatedState(onDoubleTapEmpty)
     val sizeCommitCb by rememberUpdatedState(onSizeCommitted)
+    val twoFingerCb by rememberUpdatedState(onTwoFingerSwipe)
 
     // アプリ構成やレイアウトが変わったら再配置
     val keys = remember(apps) { apps.map { it.key } }
@@ -87,8 +91,8 @@ fun SphereView(
         engine.setItems(keys, settings.sphereLayout, animate = settings.entranceAnim)
         frame.intValue++
     }
-    LaunchedEffect(homePresses) {
-        if (homePresses > 0) engine.spin(5f)
+    LaunchedEffect(spinRequests) {
+        if (spinRequests > 0) engine.spin(5f)
     }
     LaunchedEffect(resetRequests) {
         if (resetRequests > 0) engine.reset()
@@ -121,6 +125,11 @@ fun SphereView(
     val labelPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER } }
     val initialPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD } }
     val labelCache = remember { HashMap<String, String>() }
+    val badgePaint = remember {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD; color = android.graphics.Color.WHITE
+        }
+    }
     val point = remember { FloatArray(3) }
     val point2 = remember { FloatArray(3) }
     val canvasPos = remember { FloatArray(2) }
@@ -169,6 +178,8 @@ fun SphereView(
                     val longTimeout = viewConfiguration.longPressTimeoutMillis
                     var pinchStart = 0f
                     var pinchAccum = 1f
+                    var overrideBefore: Float? = null
+                    var twoFingerPan = Offset.Zero
 
                     while (true) {
                         val waitLong = !dragging && !pinching && !longPressed
@@ -192,15 +203,21 @@ fun SphereView(
                         val pressed = event.changes.filter { it.pressed }
                         if (pressed.isEmpty()) break
 
-                        if (pressed.size >= 2 && currentSettings.pinchToZoom && !longPressed) {
+                        if (pressed.size >= 2 && !longPressed) {
+                            // 2 本指: ピンチ（拡大縮小）か、2 本指スワイプ
                             if (!pinching) {
                                 pinching = true
+                                overrideBefore = engine.sizeOverride
                                 pinchStart = engine.sizeOverride ?: currentSettings.sphereSize
                                 pinchAccum = 1f
+                                twoFingerPan = Offset.Zero
                             }
                             pinchAccum *= event.calculateZoom()
-                            engine.sizeOverride = (pinchStart * pinchAccum).coerceIn(0.4f, 1.5f)
-                            frame.intValue++
+                            twoFingerPan += event.calculatePan()
+                            if (currentSettings.pinchToZoom) {
+                                engine.sizeOverride = (pinchStart * pinchAccum).coerceIn(0.4f, 1.5f)
+                                frame.intValue++
+                            }
                             event.changes.forEach { it.consume() }
                             continue
                         }
@@ -224,7 +241,19 @@ fun SphereView(
 
                     when {
                         pinching -> {
-                            engine.sizeOverride?.let(sizeCommitCb)
+                            val swipeDist = 90.dp.toPx()
+                            val isSwipe = kotlin.math.abs(pinchAccum - 1f) < 0.15f &&
+                                kotlin.math.abs(twoFingerPan.y) > swipeDist &&
+                                kotlin.math.abs(twoFingerPan.y) > kotlin.math.abs(twoFingerPan.x) * 1.5f
+                            if (isSwipe) {
+                                // スワイプだったのでサイズ変更は取り消す
+                                engine.sizeOverride = overrideBefore
+                                frame.intValue++
+                                if (currentSettings.haptics) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                twoFingerCb(twoFingerPan.y < 0)
+                            } else if (currentSettings.pinchToZoom) {
+                                engine.sizeOverride?.let(sizeCommitCb)
+                            }
                         }
                         dragging -> {
                             val v = tracker.calculateVelocity()
@@ -323,6 +352,24 @@ fun SphereView(
                     initialPaint.textSize = half
                     initialPaint.color = Color.White.copy(alpha = a).toArgb()
                     c.nativeCanvas.drawText(app.label.take(1), x, y + half * 0.35f, initialPaint)
+                }
+            }
+
+            val badge = if (s.showBadges && !app.isWorkProfile) badges[app.packageName] ?: 0 else 0
+            if (badge > 0 && t > 0.4f) {
+                val br = max(7.dp.toPx(), sz * (if (s.badgeShowCount) 0.2f else 0.12f))
+                val bc = Offset(x + half * 0.72f, y - half * 0.72f)
+                drawCircle(Color.White.copy(alpha = a), br + 1.5.dp.toPx(), bc)
+                drawCircle(palette.pink.copy(alpha = a), br, bc)
+                if (s.badgeShowCount) {
+                    drawIntoCanvas { c ->
+                        badgePaint.textSize = br * (if (badge > 9) 0.95f else 1.25f)
+                        badgePaint.alpha = (a * 255).toInt()
+                        c.nativeCanvas.drawText(
+                            if (badge > 99) "99+" else badge.toString(),
+                            bc.x, bc.y + badgePaint.textSize * 0.36f, badgePaint,
+                        )
+                    }
                 }
             }
 

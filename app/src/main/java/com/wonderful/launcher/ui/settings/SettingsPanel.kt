@@ -67,6 +67,20 @@ import com.wonderful.launcher.data.SphereLayout
 import com.wonderful.launcher.data.SystemActions
 import com.wonderful.launcher.data.WallpaperType
 import com.wonderful.launcher.ui.LauncherViewModel
+import com.wonderful.launcher.ui.Panel
+import com.wonderful.launcher.data.GestureSlot
+import com.wonderful.launcher.data.Migration
+import com.wonderful.launcher.data.SpecialPermission
+import com.wonderful.launcher.data.actionFor
+import com.wonderful.launcher.data.withAction
+import com.wonderful.launcher.ui.components.Glyph
+import com.wonderful.launcher.ui.components.RetroGlyph
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.wonderful.launcher.ui.components.AppIcon
 import com.wonderful.launcher.ui.components.NeonText
 import com.wonderful.launcher.ui.components.RetroButton
@@ -92,7 +106,9 @@ private enum class Tab(val label: String) {
     SEARCH("検索"),
     RECENT("履歴"),
     FOLDER("フォルダ/ドック"),
+    WIDGETS("ウィジェット"),
     GESTURE("ジェスチャー"),
+    PERMISSIONS("権限"),
     APPS("アプリ管理"),
     SYSTEM("システム"),
     BACKUP("バックアップ"),
@@ -113,8 +129,11 @@ fun SettingsPanel(
     val p = LocalPalette.current
     val s = data.settings
     val update: ((LauncherSettings) -> LauncherSettings) -> Unit = { vm.updateSettings(it) }
+    // LAUNCH_APP で起動するアプリを選んでいるジェスチャー
+    var chooseFor by remember { mutableStateOf<GestureSlot?>(null) }
 
-    RetroWindow("CONFIG.SYS", onClose, modifier) {
+    Box(modifier) {
+    RetroWindow("CONFIG.SYS", onClose, Modifier.fillMaxSize()) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -147,12 +166,68 @@ fun SettingsPanel(
                         Tab.SEARCH -> SearchTab(s, update)
                         Tab.RECENT -> RecentTab(s, update, vm)
                         Tab.FOLDER -> FolderDockTab(s, update, data, apps, icons, vm)
-                        Tab.GESTURE -> GestureTab(s, update)
+                        Tab.WIDGETS -> WidgetsTab(s, update, data, vm)
+                        Tab.GESTURE -> GestureTab(s, update, apps) { chooseFor = it }
+                        Tab.PERMISSIONS -> PermissionsTab(s, update)
                         Tab.SYSTEM -> SystemTab(s, update, vm)
                         Tab.BACKUP -> BackupTab(vm)
                         Tab.ABOUT -> AboutTab(data, apps)
                         Tab.APPS -> Unit
                     }
+                }
+            }
+        }
+    }
+    AnimatedVisibility(
+        visible = chooseFor != null,
+        enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.9f),
+        exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.9f),
+    ) {
+        val slot = chooseFor
+        AppChooser(
+            title = (slot?.label ?: "") + " で起動",
+            apps = apps,
+            icons = icons,
+            onPick = { app ->
+                if (slot != null) update {
+                    it.withAction(slot, GestureAction.LAUNCH_APP)
+                        .copy(gestureApps = it.gestureApps + (slot.name to app.key))
+                }
+                chooseFor = null
+            },
+            onClose = { chooseFor = null },
+        )
+    }
+    }
+}
+
+@Composable
+private fun AppChooser(
+    title: String,
+    apps: List<AppInfo>,
+    icons: Map<String, ImageBitmap>,
+    onPick: (AppInfo) -> Unit,
+    onClose: () -> Unit,
+) {
+    val p = LocalPalette.current
+    var query by remember { mutableStateOf("") }
+    val q = normalizeForSearch(query.trim())
+    val list = remember(apps, q) { apps.filter { matchScore(it, q, true) > 0 } }
+    RetroWindow("SELECT_APP.EXE", onClose, Modifier.fillMaxSize().padding(12.dp)) {
+        Column(Modifier.padding(12.dp)) {
+            RetroLabel(title, color = p.cyan, size = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            RetroTextField(query, { query = it }, "アプリを検索…", Modifier.fillMaxWidth())
+        }
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+            items(list, key = { it.key }) { app ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onPick(app) }.padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AppIcon(icons[app.key], app.label, 36.dp)
+                    Spacer(Modifier.width(12.dp))
+                    RetroLabel(app.label, size = 14.sp)
                 }
             }
         }
@@ -232,7 +307,7 @@ private fun ButtonsTab(s: LauncherSettings, u: Update) {
     ChoiceSetting("右下", CornerAction.entries, s.cornerBottomRight, { it.label }) { v -> u { it.copy(cornerBottomRight = v) } }
     if (listOf(s.cornerTopLeft, s.cornerTopRight, s.cornerBottomLeft, s.cornerBottomRight).none { it == CornerAction.SETTINGS }) {
         RetroLabel(
-            "⚠ 設定ボタンがありません。設定はホーム画面の長押し（ジェスチャー設定）から開けます",
+            "ⓘ 設定はジェスチャー（初期設定: 何もない所を長押し）から開けます",
             color = LocalPalette.current.yellow, size = 11.sp, maxLines = 3,
         )
     }
@@ -343,7 +418,7 @@ private fun ClockTab(s: LauncherSettings, u: Update) {
     SwitchSetting("秒を表示", s.showSeconds) { v -> u { it.copy(showSeconds = v) } }
     SwitchSetting("日付を表示", s.showDate) { v -> u { it.copy(showDate = v) } }
     SliderSetting("時計の大きさ", s.clockScale, 0.5f..1.6f, format = ::pct) { v -> u { it.copy(clockScale = v) } }
-    SwitchSetting("タップでアラームを開く", s.clockTapOpensAlarm) { v -> u { it.copy(clockTapOpensAlarm = v) } }
+    ChoiceSetting("時計をタップした時", GestureAction.entries, s.clockTapAction, { it.label }) { v -> u { it.copy(clockTapAction = v) } }
 }
 
 @Composable
@@ -415,14 +490,104 @@ private fun FolderDockTab(
 }
 
 @Composable
-private fun GestureTab(s: LauncherSettings, u: Update) {
-    SectionHeader("ホーム画面のジェスチャー")
-    ChoiceSetting("何もない所をダブルタップ", GestureAction.entries, s.doubleTapAction, { it.label }) { v -> u { it.copy(doubleTapAction = v) } }
-    ChoiceSetting("何もない所を長押し", GestureAction.entries, s.longPressAction, { it.label }) { v -> u { it.copy(longPressAction = v) } }
+private fun GestureTab(s: LauncherSettings, u: Update, apps: List<AppInfo>, onChooseApp: (GestureSlot) -> Unit) {
+    val p = LocalPalette.current
+    val context = LocalContext.current
+    val a11y = remember { SpecialPermission.ACCESSIBILITY.isGranted(context) }
+    SectionHeader("ジェスチャーの割り当て")
     RetroLabel(
-        "・スワイプ: 球体を回転\n・2本指ピンチ: 球体の拡大縮小\n・アイコン長押し: アプリメニュー\n・ホームボタン: パネルを閉じる / 球体をスピン",
-        size = 12.sp, maxLines = 6, color = LocalPalette.current.cyan, modifier = Modifier.padding(top = 12.dp),
+        "🔒 の付いた動作は 権限 → ユーザー補助 を ON にすると使えます",
+        size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 2,
     )
+    GestureSlot.entries.forEach { slot ->
+        val current = s.actionFor(slot)
+        ChoiceSetting(
+            slot.label, GestureAction.entries, current,
+            { a -> if (a.needsAccessibility) "🔒" + a.label else a.label },
+        ) { v ->
+            if (v == GestureAction.LAUNCH_APP) onChooseApp(slot) else u { it.withAction(slot, v) }
+        }
+        if (current == GestureAction.LAUNCH_APP) {
+            val name = s.gestureApps[slot.name]?.let { key -> apps.firstOrNull { it.key == key }?.label } ?: "未選択"
+            ActionSetting("  └ 起動するアプリ: $name", "変更", color = p.mint) { onChooseApp(slot) }
+        }
+        if (current.needsAccessibility && !a11y) {
+            ActionSetting("  └ ユーザー補助が OFF です", "ON にする", color = p.yellow) {
+                SpecialPermission.ACCESSIBILITY.request(context)
+            }
+        }
+    }
+    if (!Migration.settingsReachable(s)) {
+        RetroLabel("⚠ 設定を開く手段が必要なので、長押しは「設定」に戻ります", color = p.yellow, size = 11.sp, maxLines = 2)
+    }
+    SectionHeader("いつでも使える操作")
+    RetroLabel(
+        "・1本指スワイプ（球体の上）: 球体を回転\n・2本指ピンチ: 球体の拡大縮小\n・アイコン長押し: アプリメニュー\n・ホームボタン（パネル表示中）: パネルを閉じる",
+        size = 12.sp, maxLines = 6, color = p.cyan, modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+@Composable
+private fun PermissionsTab(s: LauncherSettings, u: Update) {
+    val context = LocalContext.current
+    val p = LocalPalette.current
+    // 設定アプリから戻ってきたら状態を読み直す
+    var tick by remember { mutableIntStateOf(0) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
+    SectionHeader("特別な権限")
+    RetroLabel(
+        "許可すると使える機能が増えます。どれも任意で、いつでも取り消せます。",
+        size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 2,
+    )
+    SpecialPermission.entries.forEach { perm ->
+        val granted = remember(tick) { perm.isGranted(context) }
+        val shape = RoundedCornerShape(10.dp)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 5.dp)
+                .clip(shape)
+                .background((if (granted) p.mint else p.pink).copy(alpha = 0.08f))
+                .border(1.dp, (if (granted) p.mint else p.pink).copy(alpha = 0.6f), shape)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RetroGlyph(Glyph.KEY, if (granted) p.mint else p.pink, Modifier.size(24.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                RetroLabel(perm.title, size = 14.sp, maxLines = 2)
+                RetroLabel(perm.unlocks, size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 3)
+            }
+            Spacer(Modifier.width(8.dp))
+            RetroButton(
+                if (granted) "許可済み" else "許可する",
+                { perm.request(context) },
+                color = if (granted) p.mint else p.yellow,
+                filled = !granted,
+            )
+        }
+    }
+    SectionHeader("通知バッジ")
+    SwitchSetting("アイコンに通知バッジを表示", s.showBadges, "「通知へのアクセス」が必要") { v -> u { it.copy(showBadges = v) } }
+    if (s.showBadges) SwitchSetting("件数を表示", s.badgeShowCount, "OFF なら点だけ") { v -> u { it.copy(badgeShowCount = v) } }
+}
+
+@Composable
+private fun WidgetsTab(s: LauncherSettings, u: Update, data: LauncherData, vm: LauncherViewModel) {
+    val p = LocalPalette.current
+    var confirm by remember { mutableStateOf(false) }
+    SectionHeader("ウィジェット画面")
+    RetroLabel(
+        "右下のボタン（初期設定）で開きます。「配置を編集」でドラッグ移動・◢でサイズ変更・✕で削除。",
+        size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 3,
+    )
+    SwitchSetting("ネオン枠", s.widgetFrame) { v -> u { it.copy(widgetFrame = v) } }
+    SwitchSetting("編集中にグリッドを表示", s.widgetGrid) { v -> u { it.copy(widgetGrid = v) } }
+    InfoSetting("置いているウィジェット", "${data.widgets.size}")
+    ActionSetting("ウィジェット画面を開く", "OPEN", color = p.mint) { vm.openPanel(Panel.WIDGETS) }
+    ActionSetting("すべて削除", if (confirm) "本当に?" else "CLEAR", color = p.pink) {
+        if (confirm) { vm.clearWidgets(); confirm = false } else confirm = true
+    }
 }
 
 @Composable
