@@ -17,12 +17,26 @@ android {
         versionName = "1.0.0"
     }
 
+    // リリース用の署名鍵。CI では GitHub の Secrets から渡す。
+    // 無い時は debug 鍵で署名する（そのままインストールできるが、別の鍵の版からは上書き更新できない）
+    val keystorePath = System.getenv("SIGNING_KEYSTORE_PATH")
+    signingConfigs {
+        if (keystorePath != null && file(keystorePath).exists()) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {
