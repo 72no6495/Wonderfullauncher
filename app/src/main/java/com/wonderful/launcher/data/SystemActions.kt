@@ -15,10 +15,18 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
+import android.accessibilityservice.AccessibilityService
+import android.app.NotificationManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.provider.AlarmClock
+import android.provider.MediaStore
 import android.provider.Settings
 import android.content.pm.LauncherApps
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
+import com.wonderful.launcher.system.LauncherAccessibilityService
 import java.io.File
 import kotlin.math.max
 
@@ -73,6 +81,90 @@ object SystemActions {
         }.onFailure {
             Toast.makeText(context, "この端末では通知パネルを開けません", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** クイック設定パネルを開く（ユーザー補助が有効ならそちらを優先） */
+    @SuppressLint("WrongConstant")
+    fun expandQuickSettings(context: Context) {
+        if (LauncherAccessibilityService.perform(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)) return
+        runCatching {
+            val sbs = context.getSystemService("statusbar")
+            Class.forName("android.app.StatusBarManager").getMethod("expandSettingsPanel").invoke(sbs)
+        }.onFailure { expandNotifications(context) }
+    }
+
+    /**
+     * ユーザー補助サービスで GLOBAL_ACTION_* を実行。
+     * サービスが無効なら説明を出して設定画面へ案内する。
+     */
+    fun globalAction(context: Context, action: Int) {
+        if (LauncherAccessibilityService.perform(action)) return
+        Toast.makeText(context, "設定 → 権限 で「ユーザー補助」を ON にしてください", Toast.LENGTH_LONG).show()
+        SpecialPermission.ACCESSIBILITY.request(context)
+    }
+
+    fun lockScreen(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            globalAction(context, AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
+        } else Toast.makeText(context, "Android 9 以降で使えます", Toast.LENGTH_SHORT).show()
+    }
+
+    fun screenshot(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            globalAction(context, AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+        } else Toast.makeText(context, "Android 9 以降で使えます", Toast.LENGTH_SHORT).show()
+    }
+
+    fun openCamera(context: Context) {
+        safeStart(context, Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    fun openAssistant(context: Context) {
+        val ok = safeStart(context, Intent(Intent.ACTION_VOICE_COMMAND).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), toast = false)
+        if (!ok) safeStart(context, Intent(Intent.ACTION_ASSIST).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    // ── ライト ──
+    private var torchOn = false
+    private var torchCallbackRegistered = false
+
+    fun toggleFlashlight(context: Context) {
+        val cm = context.getSystemService(CameraManager::class.java) ?: return
+        runCatching {
+            if (!torchCallbackRegistered) {
+                cm.registerTorchCallback(object : CameraManager.TorchCallback() {
+                    override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                        torchOn = enabled
+                    }
+                }, Handler(Looper.getMainLooper()))
+                torchCallbackRegistered = true
+            }
+            val id = cm.cameraIdList.firstOrNull {
+                cm.getCameraCharacteristics(it).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+            } ?: run {
+                Toast.makeText(context, "ライトがありません", Toast.LENGTH_SHORT).show()
+                return
+            }
+            cm.setTorchMode(id, !torchOn)
+            torchOn = !torchOn
+        }.onFailure {
+            Toast.makeText(context, "ライトを切り替えられません", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ── おやすみモード ──
+    fun toggleDnd(context: Context) {
+        val nm = context.getSystemService(NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) {
+            Toast.makeText(context, "設定 → 権限 で「おやすみモードへのアクセス」を許可してください", Toast.LENGTH_LONG).show()
+            SpecialPermission.DND.request(context)
+            return
+        }
+        val on = nm.currentInterruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+        nm.setInterruptionFilter(
+            if (on) NotificationManager.INTERRUPTION_FILTER_ALL else NotificationManager.INTERRUPTION_FILTER_PRIORITY,
+        )
+        Toast.makeText(context, if (on) "おやすみモード OFF" else "おやすみモード ON", Toast.LENGTH_SHORT).show()
     }
 
     fun requestDefaultHome(context: Context): Intent {

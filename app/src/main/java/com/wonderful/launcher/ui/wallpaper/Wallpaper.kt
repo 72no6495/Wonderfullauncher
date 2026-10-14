@@ -55,6 +55,14 @@ fun WallpaperLayer(settings: LauncherSettings, palette: RetroPalette, paused: Bo
                 WallpaperType.IMAGE -> ImageWallpaper(settings.wallpaperImageVersion, Modifier.fillMaxSize().then(blurMod))
                 WallpaperType.GRADIENT -> GradientWallpaper(settings, palette, Modifier.fillMaxSize())
                 WallpaperType.SOLID -> Box(Modifier.fillMaxSize().background(Color(settings.solidColor)))
+                WallpaperType.UNDERWATER -> UnderwaterScene(settings, palette, paused, blurMod)
+                WallpaperType.MAZE -> MazeScene(settings, palette, paused, blurMod)
+                WallpaperType.GLITCH -> GlitchScene(settings, palette, paused, blurMod)
+                WallpaperType.MATRIX -> MatrixScene(settings, palette, paused, blurMod)
+                WallpaperType.STARFIELD -> StarfieldScene(settings, palette, paused, blurMod)
+                WallpaperType.LAVA -> LavaScene(settings, palette, paused, blurMod)
+                WallpaperType.AURORA -> AuroraScene(settings, palette, paused, blurMod)
+                WallpaperType.LIFE -> LifeScene(settings, palette, paused, blurMod)
             }
             if (settings.wallpaperDim > 0f) {
                 Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = settings.wallpaperDim)))

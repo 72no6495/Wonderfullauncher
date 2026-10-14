@@ -49,12 +49,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.composed
+import androidx.compose.runtime.rememberUpdatedState
+import kotlin.math.abs
+import androidx.compose.ui.input.pointer.positionChange
 import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.data.ClockStyle
 import com.wonderful.launcher.data.CornerAction
 import com.wonderful.launcher.ui.theme.LocalPalette
 import com.wonderful.launcher.ui.theme.LocalRetroFont
 import com.wonderful.launcher.ui.theme.LocalSettings
+import com.wonderful.launcher.ui.theme.jelly
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -153,6 +162,7 @@ fun CornerAction.glyph(): Glyph = when (this) {
     CornerAction.SETTINGS -> Glyph.SETTINGS
     CornerAction.RECENT -> Glyph.RECENT
     CornerAction.FOLDERS -> Glyph.FOLDER
+    CornerAction.WIDGETS -> Glyph.WIDGETS
     CornerAction.NONE -> Glyph.NONE
 }
 
@@ -161,6 +171,7 @@ fun CornerAction.englishLabel(): String = when (this) {
     CornerAction.SETTINGS -> "CONFIG"
     CornerAction.RECENT -> "RECENT"
     CornerAction.FOLDERS -> "FOLDER"
+    CornerAction.WIDGETS -> "WIDGET"
     CornerAction.NONE -> ""
 }
 
@@ -180,7 +191,7 @@ fun CornerButton(
     val p = LocalPalette.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.82f else 1f, spring(dampingRatio = 0.3f, stiffness = 500f), label = "corner")
+    val scale by animateFloatAsState(if (pressed) 0.82f else 1f, spring(dampingRatio = s.jelly(0.3f), stiffness = 500f), label = "corner")
     val infinite = rememberInfiniteTransition(label = "float")
     val bob by infinite.animateFloat(
         0f, 1f, infiniteRepeatable(tween((2600 / s.animSpeed).toInt(), easing = FastOutSlowInEasing), RepeatMode.Reverse),
@@ -194,6 +205,7 @@ fun CornerButton(
         CornerAction.SETTINGS -> p.yellow
         CornerAction.RECENT -> p.pink
         CornerAction.FOLDERS -> p.mint
+        CornerAction.WIDGETS -> p.purple
         CornerAction.NONE -> p.text
     }
     val sizeDp = s.cornerSizeDp.dp
@@ -249,6 +261,7 @@ fun CornerButton(
 fun Dock(
     apps: List<AppInfo>,
     icons: Map<String, ImageBitmap>,
+    badges: Map<String, Int>,
     onLaunch: (AppInfo) -> Unit,
     onLongPress: (AppInfo) -> Unit,
     modifier: Modifier = Modifier,
@@ -274,13 +287,84 @@ fun Dock(
         apps.forEach { app ->
             val interaction = remember(app.key) { MutableInteractionSource() }
             val pressed by interaction.collectIsPressedAsState()
-            val sc by animateFloatAsState(if (pressed) 0.8f else 1f, spring(dampingRatio = 0.35f), label = "dock")
-            AppIcon(
-                icons[app.key], app.label, s.dockIconSizeDp.dp,
+            val sc by animateFloatAsState(if (pressed) 0.8f else 1f, spring(dampingRatio = s.jelly(0.35f)), label = "dock")
+            Box(
                 Modifier
                     .scale(sc)
                     .combinedClickable(interaction, null, onClick = { onLaunch(app) }, onLongClick = { onLongPress(app) }),
+            ) {
+                AppIcon(icons[app.key], app.label, s.dockIconSizeDp.dp)
+                val count = if (app.isWorkProfile) 0 else badges[app.packageName] ?: 0
+                if (s.showBadges && count > 0) {
+                    Badge(count, s.badgeShowCount, Modifier.align(Alignment.TopEnd))
+                }
+            }
+        }
+    }
+}
+
+/** 通知件数のバッジ */
+@Composable
+fun Badge(count: Int, showCount: Boolean, modifier: Modifier = Modifier) {
+    val p = LocalPalette.current
+    val pulse by rememberInfiniteTransition(label = "badge").animateFloat(
+        0.85f, 1.1f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "pulse",
+    )
+    Box(
+        modifier
+            .scale(pulse)
+            .size(if (showCount) 19.dp else 11.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(p.pink)
+            .border(1.5.dp, Color.White, androidx.compose.foundation.shape.CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (showCount) {
+            Text(
+                if (count > 99) "99+" else count.toString(),
+                color = Color.White, fontSize = if (count > 9) 8.sp else 10.sp, fontWeight = FontWeight.Bold,
             )
+        }
+    }
+}
+
+enum class SwipeDir { UP, DOWN, LEFT, RIGHT }
+
+/**
+ * 1 本指のスワイプを検出する。タップや長押しは子要素にそのまま届く。
+ * [enabled] で方向ごとに有効/無効を切り替え、無効な方向のドラッグは消費しない。
+ */
+fun Modifier.swipeGestures(enabled: (SwipeDir) -> Boolean, onSwipe: (SwipeDir) -> Unit): Modifier = composed {
+    val isEnabled by rememberUpdatedState(enabled)
+    val callback by rememberUpdatedState(onSwipe)
+    pointerInput(Unit) {
+        val threshold = 56.dp.toPx()
+        awaitEachGesture {
+            // Initial パスで先に受け取り、スワイプと判定したら子（時計のタップ等）に渡さない
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            var total = Offset.Zero
+            var fired = false
+            while (true) {
+                val ev = awaitPointerEvent(PointerEventPass.Initial)
+                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                if (!ch.pressed) {
+                    if (fired) ch.consume()
+                    break
+                }
+                if (ev.changes.count { it.pressed } > 1) break // 2 本指は別ジェスチャー
+                total += ch.positionChange()
+                if (!fired && total.getDistance() > threshold) {
+                    val dir = if (abs(total.x) > abs(total.y)) {
+                        if (total.x > 0) SwipeDir.RIGHT else SwipeDir.LEFT
+                    } else {
+                        if (total.y > 0) SwipeDir.DOWN else SwipeDir.UP
+                    }
+                    if (!isEnabled(dir)) break
+                    fired = true
+                    callback(dir)
+                }
+                if (fired) ch.consume()
+            }
         }
     }
 }

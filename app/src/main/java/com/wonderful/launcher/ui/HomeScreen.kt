@@ -1,6 +1,22 @@
 package com.wonderful.launcher.ui
 
+import android.accessibilityservice.AccessibilityService
+import android.widget.Toast
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import com.wonderful.launcher.ui.wallpaper.ScreenEffects
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
+import com.wonderful.launcher.data.GestureSlot
+import com.wonderful.launcher.data.actionFor
+import com.wonderful.launcher.ui.components.SwipeDir
+import com.wonderful.launcher.ui.components.swipeGestures
+import com.wonderful.launcher.ui.panels.AddSystemWidget
+import com.wonderful.launcher.ui.panels.WidgetPanel
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.EnterExitState
@@ -69,7 +85,7 @@ import kotlin.math.min
 import kotlin.random.Random
 
 @Composable
-fun HomeScreen(vm: LauncherViewModel) {
+fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
     val data by vm.data.collectAsStateWithLifecycle()
     val apps by vm.apps.collectAsStateWithLifecycle()
     val icons by vm.icons.collectAsStateWithLifecycle()
@@ -78,30 +94,56 @@ fun HomeScreen(vm: LauncherViewModel) {
     val panel by vm.panel.collectAsStateWithLifecycle()
     val menuApp by vm.menuApp.collectAsStateWithLifecycle()
     val recent by vm.recent.collectAsStateWithLifecycle()
-    val homePresses by vm.homePresses.collectAsStateWithLifecycle()
+    val badges by vm.badges.collectAsStateWithLifecycle()
     val s = data.settings
     val context = LocalContext.current
 
     RetroTheme(s) {
         val p = LocalPalette.current
         var resetRequests by remember { mutableIntStateOf(0) }
+        var spinRequests by remember { mutableIntStateOf(0) }
         // 最後に開いていたアプリメニューの対象（閉じるアニメーション中も表示するため）
         val lastMenuApp = remember { arrayOfNulls<AppInfo>(1) }
         if (menuApp != null) lastMenuApp[0] = menuApp
 
-        fun runGesture(a: GestureAction) {
-            when (a) {
+        fun runGesture(slot: GestureSlot) {
+            when (s.actionFor(slot)) {
                 GestureAction.NONE -> Unit
                 GestureAction.SEARCH -> vm.openPanel(Panel.SEARCH)
                 GestureAction.SETTINGS -> vm.openPanel(Panel.SETTINGS)
                 GestureAction.RECENT -> vm.openPanel(Panel.RECENT)
                 GestureAction.FOLDERS -> vm.openPanel(Panel.FOLDERS)
+                GestureAction.WIDGETS -> vm.openPanel(Panel.WIDGETS)
                 GestureAction.NOTIFICATIONS -> SystemActions.expandNotifications(context)
+                GestureAction.QUICK_SETTINGS -> SystemActions.expandQuickSettings(context)
                 GestureAction.RESET_SPHERE -> resetRequests++
+                GestureAction.SPIN_SPHERE -> spinRequests++
                 GestureAction.SHUFFLE_SPHERE -> vm.updateSettings {
                     it.copy(sortOrder = SortOrder.SHUFFLE, shuffleSeed = Random.nextInt())
                 }
+                GestureAction.LAUNCH_APP -> {
+                    val app = s.gestureApps[slot.name]?.let { key -> apps.firstOrNull { it.key == key } }
+                    if (app != null) vm.launch(app)
+                    else Toast.makeText(context, "設定 → ジェスチャー で起動するアプリを選んでください", Toast.LENGTH_SHORT).show()
+                }
+                GestureAction.ALARM -> SystemActions.openAlarms(context)
+                GestureAction.CAMERA -> SystemActions.openCamera(context)
+                GestureAction.ASSISTANT -> SystemActions.openAssistant(context)
+                GestureAction.FLASHLIGHT -> SystemActions.toggleFlashlight(context)
+                GestureAction.DND -> SystemActions.toggleDnd(context)
+                GestureAction.LOCK_SCREEN -> SystemActions.lockScreen(context)
+                GestureAction.SCREENSHOT -> SystemActions.screenshot(context)
+                GestureAction.SYSTEM_RECENTS ->
+                    SystemActions.globalAction(context, AccessibilityService.GLOBAL_ACTION_RECENTS)
+                GestureAction.POWER_MENU ->
+                    SystemActions.globalAction(context, AccessibilityService.GLOBAL_ACTION_POWER_DIALOG)
             }
+        }
+
+        // ホーム画面でホームボタン
+        val onHomeButton by rememberUpdatedState { runGesture(GestureSlot.HOME_BUTTON) }
+        LaunchedEffect(vm) {
+            vm.homePresses.collect { onHomeButton() }
         }
 
         val launchFromPanel: (AppInfo) -> Unit = { app ->
@@ -117,15 +159,52 @@ fun HomeScreen(vm: LauncherViewModel) {
             val rootW = constraints.maxWidth.toFloat()
             val rootH = constraints.maxHeight.toFloat()
 
+            // パネルを開いている間は後ろ（壁紙＋ホーム）をぼかす
+            val backdropBlur by animateFloatAsState(
+                if (s.panelBlur && (panel != Panel.NONE || menuApp != null)) 1f else 0f,
+                tween((350 / s.animSpeed).toInt()), label = "backdrop",
+            )
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        if (backdropBlur > 0.01f && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val r = backdropBlur * 14.dp.toPx()
+                            renderEffect = BlurEffect(r, r, TileMode.Clamp)
+                        }
+                    },
+            ) {
             WallpaperLayer(s, p, paused = panel != Panel.NONE)
 
             // ── ホーム ──
             Column(Modifier.fillMaxSize().systemBarsPadding()) {
-                if (s.showClock) {
-                    RetroClock(
-                        onClick = { if (s.clockTapOpensAlarm) SystemActions.openAlarms(context) },
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                    )
+                // 上部: 時計＋スワイプ（下・左・右）の受付エリア
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .swipeGestures(
+                            enabled = { dir ->
+                                when (dir) {
+                                    SwipeDir.DOWN -> s.swipeDownAction != GestureAction.NONE
+                                    SwipeDir.LEFT -> s.swipeLeftAction != GestureAction.NONE
+                                    SwipeDir.RIGHT -> s.swipeRightAction != GestureAction.NONE
+                                    SwipeDir.UP -> false
+                                }
+                            },
+                        ) { dir ->
+                            when (dir) {
+                                SwipeDir.DOWN -> runGesture(GestureSlot.SWIPE_DOWN)
+                                SwipeDir.LEFT -> runGesture(GestureSlot.SWIPE_LEFT)
+                                SwipeDir.RIGHT -> runGesture(GestureSlot.SWIPE_RIGHT)
+                                SwipeDir.UP -> Unit
+                            }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (s.showClock) {
+                        RetroClock(onClick = { runGesture(GestureSlot.CLOCK_TAP) })
+                    }
                 }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     SphereView(
@@ -135,15 +214,19 @@ fun HomeScreen(vm: LauncherViewModel) {
                         palette = p,
                         // 設定画面は半透明なので、後ろの球体で変更をその場で確認できるよう止めない
                         paused = panel != Panel.NONE && panel != Panel.SETTINGS,
-                        homePresses = homePresses,
+                        spinRequests = spinRequests,
                         resetRequests = resetRequests,
+                        badges = badges,
                         onLaunch = { app, rect, opts -> vm.launch(app, rect, opts) },
                         onLongPressApp = { vm.showMenu(it) },
-                        onLongPressEmpty = { runGesture(s.longPressAction) },
+                        onLongPressEmpty = { runGesture(GestureSlot.LONG_PRESS) },
                         onDoubleTapEmpty = if (s.doubleTapAction != GestureAction.NONE) {
-                            { runGesture(s.doubleTapAction) }
+                            { runGesture(GestureSlot.DOUBLE_TAP) }
                         } else null,
                         onSizeCommitted = { v -> vm.updateSettings { it.copy(sphereSize = v) } },
+                        onTwoFingerSwipe = { up ->
+                            runGesture(if (up) GestureSlot.TWO_FINGER_UP else GestureSlot.TWO_FINGER_DOWN)
+                        },
                     )
                     if (sphereApps.isEmpty() && apps.isNotEmpty()) {
                         EmptyMessage(
@@ -157,14 +240,31 @@ fun HomeScreen(vm: LauncherViewModel) {
                             CornerAction.SETTINGS -> vm.openPanel(Panel.SETTINGS, origin)
                             CornerAction.RECENT -> vm.openPanel(Panel.RECENT, origin)
                             CornerAction.FOLDERS -> vm.openPanel(Panel.FOLDERS, origin)
+                            CornerAction.WIDGETS -> vm.openPanel(Panel.WIDGETS, origin)
                             CornerAction.NONE -> Unit
                         }
                     }
                 }
-                if (s.showDock && dockApps.isNotEmpty()) {
-                    Dock(dockApps, icons, onLaunch = { vm.launch(it) }, onLongPress = { vm.showMenu(it) })
-                    Spacer(Modifier.height(10.dp))
+                // 下部: ドック＋上スワイプの受付エリア
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 40.dp)
+                        .swipeGestures(enabled = { it == SwipeDir.UP && s.swipeUpAction != GestureAction.NONE }) {
+                            runGesture(GestureSlot.SWIPE_UP)
+                        },
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    if (s.showDock && dockApps.isNotEmpty()) {
+                        Dock(
+                            dockApps, icons, badges,
+                            onLaunch = { vm.launch(it) }, onLongPress = { vm.showMenu(it) },
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
+                    }
                 }
+            }
+
             }
 
             // ── パネル ──
@@ -213,6 +313,14 @@ fun HomeScreen(vm: LauncherViewModel) {
                     modifier = Modifier.fillMaxSize(),
                 )
             }
+            PanelHost(panel == Panel.WIDGETS, s, origin) {
+                WidgetPanel(
+                    data, vm,
+                    onAddSystem = onAddSystemWidget,
+                    onClose = { vm.closePanel() },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
             PanelHost(panel == Panel.SETTINGS, s, origin) {
                 SettingsPanel(
                     data, apps, icons, vm,
@@ -238,6 +346,7 @@ fun HomeScreen(vm: LauncherViewModel) {
                 }
             }
 
+            ScreenEffects(s, p, paused = false)
             CrtOverlay(s)
         }
     }

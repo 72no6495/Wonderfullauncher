@@ -74,6 +74,7 @@ import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.ui.theme.LocalPalette
 import com.wonderful.launcher.ui.theme.LocalRetroFont
 import com.wonderful.launcher.ui.theme.LocalSettings
+import com.wonderful.launcher.ui.theme.jelly
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -249,7 +250,7 @@ fun RetroButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = 0.4f), label = "btn")
+    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, spring(dampingRatio = LocalSettings.current.jelly(0.4f)), label = "btn")
     val shape = RoundedCornerShape(6.dp)
     Box(
         modifier
@@ -334,7 +335,11 @@ fun AppTile(
     val p = LocalPalette.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.85f else 1f, spring(dampingRatio = 0.35f, stiffness = 600f), label = "tile")
+    val scale by animateFloatAsState(
+        if (pressed) 0.85f else 1f,
+        spring(dampingRatio = LocalSettings.current.jelly(0.35f), stiffness = 600f),
+        label = "tile",
+    )
     Column(
         modifier
             .scale(scale)
@@ -381,7 +386,7 @@ fun AppIcon(icon: ImageBitmap?, label: String, size: Dp, modifier: Modifier = Mo
 // 自前で描くレトロなアイコン（グリフ）
 // ─────────────────────────────────────────────
 
-enum class Glyph { SEARCH, SETTINGS, RECENT, FOLDER, NONE, PLUS, TRASH, EDIT, SPHERE, STAR, BACK }
+enum class Glyph { SEARCH, SETTINGS, RECENT, FOLDER, WIDGETS, NONE, PLUS, TRASH, EDIT, SPHERE, STAR, BACK, KEY }
 
 @Composable
 fun RetroGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modifier, stroke: Dp = 2.2.dp) {
@@ -416,6 +421,18 @@ fun RetroGlyph(glyph: Glyph, color: Color, modifier: Modifier = Modifier, stroke
                 }
                 drawPath(path, color, style = st)
                 drawLine(color, Offset(w * 0.1f, h * 0.45f), Offset(w * 0.9f, h * 0.45f), sw)
+            }
+            Glyph.WIDGETS -> {
+                // 大小のタイル
+                drawRoundRect(color, Offset(w * 0.12f, h * 0.12f), Size(w * 0.76f, h * 0.32f), CornerRadius(sw * 1.5f), style = st)
+                drawRoundRect(color, Offset(w * 0.12f, h * 0.56f), Size(w * 0.32f, h * 0.32f), CornerRadius(sw * 1.5f), style = st)
+                drawRoundRect(color, Offset(w * 0.56f, h * 0.56f), Size(w * 0.32f, h * 0.32f), CornerRadius(sw * 1.5f), style = st)
+            }
+            Glyph.KEY -> {
+                drawCircle(color, w * 0.18f, Offset(w * 0.3f, h * 0.5f), style = st)
+                drawLine(color, Offset(w * 0.48f, h * 0.5f), Offset(w * 0.88f, h * 0.5f), sw, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.75f, h * 0.5f), Offset(w * 0.75f, h * 0.66f), sw, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.86f, h * 0.5f), Offset(w * 0.86f, h * 0.62f), sw, StrokeCap.Round)
             }
             Glyph.PLUS -> {
                 drawLine(color, Offset(c.x, h * 0.2f), Offset(c.x, h * 0.8f), sw, StrokeCap.Round)

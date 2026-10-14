@@ -131,3 +131,6 @@ fun RetroTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
 }
+
+/** ゴム設定を反映したバネの減衰率（小さいほどビヨンビヨン） */
+fun LauncherSettings.jelly(base: Float): Float = (base * (1f - 0.75f * rubber)).coerceAtLeast(0.08f)
