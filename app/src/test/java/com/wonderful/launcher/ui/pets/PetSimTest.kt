@@ -14,8 +14,8 @@ class PetSimTest {
         setAquarium(aquarium)
         syncPets((0 until 10).map { Triple("app$it", if (it % 2 == 0) 0.2f else 0.9f, 0.5f) })
         syncFurniture(
-            listOf(FurnitureKind.BED, FurnitureKind.BALL, FurnitureKind.TV, FurnitureKind.BOWL, FurnitureKind.SOFA, FurnitureKind.CASTLE, FurnitureKind.CHEST, FurnitureKind.TREE, FurnitureKind.TENT, FurnitureKind.STUMP, FurnitureKind.ROCK)
-                .mapIndexed { i, k -> Triple("f$i", k, (0.05f + i * 0.08f) to 0.5f) },
+            listOf(FurnitureKind.BED, FurnitureKind.BALL, FurnitureKind.TV, FurnitureKind.BOWL, FurnitureKind.SOFA, FurnitureKind.CASTLE, FurnitureKind.CHEST, FurnitureKind.TREE, FurnitureKind.TENT, FurnitureKind.STUMP, FurnitureKind.ROCK, FurnitureKind.PLANT, FurnitureKind.LAMP, FurnitureKind.MUSHROOM, FurnitureKind.TUMOR, FurnitureKind.FOOD_LUMP, FurnitureKind.BATTERY, FurnitureKind.COIN, FurnitureKind.CAPSULE)
+                .mapIndexed { i, k -> Triple("f$i", k, (0.04f + i * 0.045f) to (0.3f + (i % 3) * 0.2f)) },
         )
     }
 
@@ -162,6 +162,24 @@ class PetSimTest {
         }
         assertTrue("over capacity by $worst", worst <= 0)
         assertTrue("crowded frames: $crowdedFrames", crowdedFrames < 30 * 20)
+    }
+
+    @Test
+    fun petsPlayWithFurnitureAndGutMoves() {
+        val s = sim(false)
+        s.setBodyMode(true)
+        val used = HashSet<FurnitureKind>()
+        val moods = HashSet<Mood>()
+        repeat(30 * 400) {
+            s.step(1f / 30f); s.sounds.clear()
+            s.pets.forEach { p -> moods += p.mood; if (p.mood == Mood.USE) s.furniture.firstOrNull { it.id == p.targetFurniture }?.let { used += it.kind } }
+            s.furniture.forEach { f -> assertTrue(f.state in 0f..1f && f.active >= 0f && f.x.isFinite()) }
+        }
+        assertTrue("USE never happened", Mood.USE in moods)
+        assertTrue("few furniture interactions: $used", used.size >= 4)
+        // ぜん動の波は 0〜1 で、場所と時間で変わる
+        val w = (0..20).map { s.gutWave(it * 100f) }
+        assertTrue(w.all { it in 0f..1f } && w.max() - w.min() > 0.5f)
     }
 
     @Test fun roomLongRun() = run(false)

@@ -181,7 +181,7 @@ fun DrawScope.drawPetBackground(theme: PetTheme, p: RetroPalette, sim: PetSim, t
             while (sy < h) { drawLine(Color.Black.copy(alpha = 0.12f), Offset(0f, sy), Offset(w, sy), 1f); sy += unit * 4f }
         }
         PetTheme.MEADOW -> drawMeadow(t, unit)
-        PetTheme.BODY -> drawBodyBackground(t, unit)
+        PetTheme.BODY -> drawBodyBackground(sim, t, unit)
         PetTheme.AQUARIUM -> {
             val floor = sim.floorY
             drawRect(Brush.verticalGradient(listOf(Color(0xFF1386A8), Color(0xFF0A4F70), Color(0xFF032A40)), 0f, floor))
@@ -409,21 +409,56 @@ fun DrawScope.drawFurniture(
             }
         }
         FurnitureKind.BLOODCELL -> drawBloodCell(Offset(f.x, f.y + sin(t * 1.5f + f.fx) * unit * 2f), r, unit)
+        FurnitureKind.TUMOR -> drawTumor(f, r, t, unit)
+        FurnitureKind.FOOD_LUMP -> drawFoodLump(f, r, t, unit)
+        FurnitureKind.BATTERY -> drawBatteryItem(f, r, t, unit)
+        FurnitureKind.COIN -> drawCoin(f, r, unit)
+        FurnitureKind.MARBLE -> drawMarble(f, r, t, unit)
         FurnitureKind.BALL -> {
             val img = emoji.get(f.kind.emoji, (r * 2.2f).toInt())
             rotate(f.spin * 57.3f, c) { image(img, f.x, f.y, r * 2.2f, r * 2.2f) }
         }
         else -> {
-            val s = r * (if (f.kind == FurnitureKind.TREE) 3.2f else 2.3f)
+            var s = r * (if (f.kind == FurnitureKind.TREE) 3.2f else 2.3f)
             val bob = if (theme == PetTheme.AQUARIUM && f.kind == FurnitureKind.CHEST) sin(t * 2f) * unit else 0f
-            image(emoji.get(f.kind.emoji, s.toInt()), f.x, f.y + bob, s, s)
-            if (f.kind == FurnitureKind.TV) {
-                // 画面のチラつき
-                val glow = 0.25f + 0.15f * sin(t * 13f) * sin(t * 3.1f)
-                drawCircle(Brush.radialGradient(listOf(colors.accent2.copy(alpha = glow), Color.Transparent), Offset(f.x, f.y + r), r * 2.2f), r * 2.2f, Offset(f.x, f.y + r))
+            val act = (f.active / 0.6f).coerceIn(0f, 1f)
+            // 遊ばれている時の動き
+            var sx = 1f
+            var sy = 1f
+            var tilt = 0f
+            when (f.kind) {
+                FurnitureKind.PLANT -> s *= 0.8f + 0.5f * f.state // 水やりで育つ
+                FurnitureKind.MUSHROOM, FurnitureKind.BED -> { sy = 1f - 0.25f * act; sx = 1f + 0.12f * act } // トランポリンでへこむ
+                FurnitureKind.TREE, FurnitureKind.PALM -> tilt = sin(t * 28f) * 5f * act // ゆさゆさ
+                FurnitureKind.SUNFLOWER -> tilt = ((f.lookX - f.x) / r * 8f).coerceIn(-22f, 22f) // 来た子の方を向く
+                FurnitureKind.CHEST, FurnitureKind.SHELL -> { sy = 1f + 0.08f * act; tilt = sin(t * 20f) * 3f * act }
+                else -> Unit
             }
-            if (f.kind == FurnitureKind.LAMP) {
-                drawCircle(Brush.radialGradient(listOf(Color(0x66FFF59D), Color.Transparent), c, r * 3f), r * 3f, c)
+            val bottom = Offset(f.x, f.y + bob + s / 2)
+            withTransform({
+                rotate(tilt, bottom)
+                scale(sx, sy, bottom)
+            }) {
+                image(emoji.get(f.kind.emoji, s.toInt()), f.x, f.y + bob, s, s)
+            }
+            when (f.kind) {
+                FurnitureKind.TV -> {
+                    // 画面のチラつき（見ている子がいる時は番組が変わって色が変わる）
+                    val glow = 0.25f + 0.15f * sin(t * 13f) * sin(t * 3.1f)
+                    val col = if (f.active > 0f) Color.hsv((t * 40f) % 360f, 0.6f, 1f) else colors.accent2
+                    drawCircle(Brush.radialGradient(listOf(col.copy(alpha = glow), Color.Transparent), Offset(f.x, f.y + r), r * 2.2f), r * 2.2f, Offset(f.x, f.y + r))
+                }
+                FurnitureKind.LAMP -> if (f.state > 0.5f) {
+                    drawCircle(Brush.radialGradient(listOf(Color(0x66FFF59D), Color.Transparent), c, r * 3f), r * 3f, c)
+                } else drawCircle(Color.Black.copy(alpha = 0.25f), r * 0.9f, c)
+                FurnitureKind.SHELL -> if (act > 0f) {
+                    // 真珠
+                    drawCircle(Brush.radialGradient(listOf(Color.White, Color(0xFFF8BBD0)), Offset(f.x - r * 0.1f, f.y - r * 0.4f), r * 0.3f), r * 0.25f * act, Offset(f.x, f.y - r * 0.3f))
+                }
+                FurnitureKind.CHEST -> if (act > 0f) {
+                    drawCircle(Brush.radialGradient(listOf(Color(0x99FFD54F), Color.Transparent), Offset(f.x, f.y - r * 0.4f), r * 1.4f), r * 1.4f * act, Offset(f.x, f.y - r * 0.4f))
+                }
+                else -> Unit
             }
         }
     }
@@ -715,6 +750,26 @@ fun DrawScope.drawParticles(sim: PetSim, colors: PetColors, emoji: EmojiCache, u
             FxKind.CRUMB -> drawCircle(Color(0xFFA0522D).copy(alpha = fade), r * 0.06f * q.size, Offset(q.x, q.y))
             FxKind.SPARK -> drawCircle(colors.accent.copy(alpha = fade * 0.8f), r * (0.2f + q.t * 1.2f), Offset(q.x, q.y), style = Stroke(unit * 2f * fade + 0.5f))
             FxKind.PHAGELET -> drawPhagelet(q, r, unit)
+            FxKind.LEAF -> rotate(q.age * 160f + q.size * 90f, Offset(q.x, q.y)) {
+                drawOval(Color(0xFF66BB6A).copy(alpha = fade), Offset(q.x - r * 0.12f * q.size, q.y - r * 0.06f * q.size), Size(r * 0.24f * q.size, r * 0.12f * q.size))
+            }
+            FxKind.DROP -> drawCircle(Color(0xFF4FC3F7).copy(alpha = fade), r * 0.06f * q.size + unit, Offset(q.x, q.y))
+            FxKind.COINFX -> {
+                drawCircle(Color(0xFFFFC107).copy(alpha = fade), r * 0.09f * q.size + unit, Offset(q.x, q.y))
+                drawCircle(Color(0xFFFFF59D).copy(alpha = fade), r * 0.04f * q.size, Offset(q.x - unit, q.y - unit))
+            }
+            FxKind.ZAP -> {
+                // ビリッ（ギザギザの電気）
+                val s = r * 0.35f * q.size
+                val path = Path().apply {
+                    moveTo(q.x - s, q.y - s * 0.6f)
+                    lineTo(q.x - s * 0.2f, q.y - s * 0.1f)
+                    lineTo(q.x - s * 0.5f, q.y + s * 0.15f)
+                    lineTo(q.x + s, q.y + s * 0.6f)
+                }
+                drawPath(path, Color(0xFFFFF176).copy(alpha = 0.5f * fade), style = Stroke(unit * 5f, cap = StrokeCap.Round))
+                drawPath(path, Color.White.copy(alpha = fade), style = Stroke(unit * 2f, cap = StrokeCap.Round))
+            }
             FxKind.SPEECH -> {
                 // おしゃべりの吹き出し
                 val pop = min(1f, q.t * 8f)

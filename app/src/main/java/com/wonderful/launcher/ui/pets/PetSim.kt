@@ -23,6 +23,8 @@ import kotlin.random.Random
 
 enum class Mood {
     IDLE, WANDER, SEEK_FOOD, EAT, SLEEP, SIT, PLAY, WATCH, HAPPY, CARRIED, CURIOUS,
+    /** 家具で遊んでいる（水やり・トランポリン・攻撃など、家具ごとの遊び） */
+    USE,
     // 仲間との交流
     APPROACH, AWAIT, CHAT, CHASE, FLEE, DANCE, HUG, GREET,
 }
@@ -45,7 +47,7 @@ enum class Sfx { PAT, EAT, DROP, LAUNCH, PICKUP, PLOP, PLACE, REMOVE, KICK, BUBB
 /** 鳴らしてほしい音（画面側でまとめて鳴らす）。[pitch] は 1 = そのまま */
 class SoundEvent(val sfx: Sfx, val x: Float, val pitch: Float, val volume: Float)
 
-enum class FxKind { HEART, ZZZ, CRUMB, BUBBLE, NOTE, SPARK, HUNGRY, SPEECH, PHAGELET }
+enum class FxKind { HEART, ZZZ, CRUMB, BUBBLE, NOTE, SPARK, HUNGRY, SPEECH, PHAGELET, LEAF, DROP, ZAP, COINFX }
 
 class Particle(
     val kind: FxKind,
@@ -161,6 +163,15 @@ data class FurnitureSpec(
 )
 
 class FurnitureBody(val id: String, val kind: FurnitureKind, var x: Float, var y: Float) {
+    /** 遊ばれている時のアニメーション（秒） */
+    var active = 0f
+    /** 家具ごとの状態：植物の育ち具合・ランプの点灯・腫瘍や食べ物の残り など（0〜1） */
+    var state = when (kind) {
+        FurnitureKind.PLANT -> 0f
+        else -> 1f
+    }
+    /** 最後に来た子の位置（ひまわりがそっちを向く） */
+    var lookX = x
     var scale = 1f
     /** 写真のファイル名 */
     var photo = ""
@@ -533,7 +544,7 @@ class PetSim(seed: Int = 7) {
         f.heading += angleDiff(f.heading, want) * min(1f, dt * 3f)
         f.vx += (cos(f.heading) * speed - f.vx) * min(1f, dt * 2f)
         f.vy += (sin(f.heading) * speed - f.vy) * min(1f, dt * 2f)
-        f.x += f.vx * dt
+        f.x += (f.vx + gutWave(f.x) * radius * 0.9f) * dt
         f.y += f.vy * dt
         val m = radius * 0.5f
         if (f.x < left + m || f.x > right - m) { f.heading = PI.toFloat() - f.heading; f.x = f.x.coerceIn(left + m, right - m) }
@@ -545,7 +556,16 @@ class PetSim(seed: Int = 7) {
     private fun stepFurniture(dt: Float) {
         furniture.forEach { f ->
             f.fx += dt
-            if (f.kind == FurnitureKind.BALL) {
+            f.active = max(0f, f.active - dt)
+            // 減った物は少しずつ元に戻る（腫瘍はしぶとい）
+            when (f.kind) {
+                FurnitureKind.FOOD_LUMP, FurnitureKind.CAPSULE -> f.state = min(1f, f.state + dt * 0.02f)
+                FurnitureKind.TUMOR -> f.state = min(1f, f.state + dt * 0.012f)
+                else -> Unit
+            }
+            if (rolls(f.kind)) {
+                // 体内では腸の動きに流される
+                if (bodyMode) f.vx += gutWave(f.x) * radius * 1.5f * dt
                 f.x += f.vx * dt
                 f.y += f.vy * dt
                 val r = furnitureRadius(f)
@@ -565,13 +585,28 @@ class PetSim(seed: Int = 7) {
         }
     }
 
+    /** 転がる物（ボール・コイン・ビー玉） */
+    fun rolls(kind: FurnitureKind) = kind == FurnitureKind.BALL || kind == FurnitureKind.COIN || kind == FurnitureKind.MARBLE
+
+    /**
+     * 腸のぜん動：左から右へ流れていく収縮の波（0〜1、1 = 一番縮んでいる）。
+     * 背景の描画と、大腸菌や転がる物を流すのに使う。
+     */
+    fun gutWave(x: Float): Float {
+        val w = max(1f, right - left)
+        val phase = (x - left) / w * 1.6f - time * 0.22f
+        val s = 0.5f + 0.5f * sin(2f * PI.toFloat() * phase)
+        return s * s * s
+    }
+
     private fun stepParticles(dt: Float) {
         particles.forEach { q ->
             q.age += dt
             q.x += q.vx * dt
             q.y += q.vy * dt
             when (q.kind) {
-                FxKind.CRUMB -> q.vy += 260f * dt
+                FxKind.CRUMB, FxKind.DROP, FxKind.COINFX -> q.vy += 260f * dt
+                FxKind.LEAF -> { q.vy = min(q.vy + 40f * dt, 40f); q.vx = sin(q.age * 4f + q.size * 9f) * 30f }
                 FxKind.BUBBLE -> q.vx += sin(q.age * 5f + q.size * 10f) * 30f * dt
                 else -> { q.vx *= 1f - min(1f, dt * 1.5f) }
             }
@@ -629,6 +664,8 @@ class PetSim(seed: Int = 7) {
         p.lift += ((if (p.mood == Mood.CARRIED) 1f else 0f) - p.lift) * min(1f, dt * 10f)
         p.hop = max(0f, p.hop - dt * 3f)
         val wantTuck = if (p.mood == Mood.SLEEP) 1f else if (p.mood in listOf(Mood.SIT, Mood.WATCH, Mood.HUG)) 0.45f else 0f
+        // 体内ではぜん動の波に少し押される
+        if (bodyMode && p.mood != Mood.CARRIED) p.x += gutWave(p.x) * radius * 0.25f * dt
         p.tuck += (wantTuck - p.tuck) * min(1f, dt * 3f)
         // 気持ちの吹き出し
         if (p.emote != Emote.NONE) {
@@ -810,8 +847,16 @@ class PetSim(seed: Int = 7) {
                 val d = hypot(p.x - ball.x, p.y - ball.y)
                 if (d < radius + furnitureRadius(ball) && time - p.lastKick > 0.6f) {
                     p.lastKick = time
-                    // 蹴る
-                    val a = atan2(ball.y - p.y, ball.x - p.x) + rnd.range(-0.4f, 0.4f)
+                    // 蹴る。近くにひまな子がいたらパスして一緒に遊ぶ
+                    val mate = pets.filter { it !== p && it.mood in FREE && hypot(it.x - p.x, it.y - p.y) < radius * 7f }.randomOrNull(rnd)
+                    val a = if (mate != null && rnd.nextFloat() < 0.6f) {
+                        if (mate.mood != Mood.PLAY && visitors(ball) < capacity(ball.kind)) {
+                            endWork(mate); setMood(mate, Mood.PLAY, rnd.range(4f, 7f)); mate.targetFurniture = ball.id
+                            emote(mate, Emote.SURPRISED, 1f)
+                        }
+                        speech(p, "パス!")
+                        atan2(mate.y - ball.y, mate.x - ball.x)
+                    } else atan2(ball.y - p.y, ball.x - p.x) + rnd.range(-0.4f, 0.4f)
                     val power = radius * rnd.range(5f, 9f)
                     ball.vx = cos(a) * power
                     ball.vy = sin(a) * power
@@ -820,14 +865,19 @@ class PetSim(seed: Int = 7) {
                     if (rnd.nextFloat() < 0.3f) emote(p, Emote.HAPPY, 1.2f, sound = false)
                 }
             }
+            Mood.USE -> {
+                val f = furniture.firstOrNull { it.id == p.targetFurniture }
+                if (f == null || p.moodTime > p.moodLength) { pickNext(p); return }
+                interact(p, f, dt)
+            }
             Mood.SIT, Mood.HAPPY, Mood.IDLE -> if (p.moodTime > p.moodLength && p.idleAnim == IdleAnim.NONE) pickNext(p)
             Mood.WANDER, Mood.CURIOUS -> {
                 val fid = p.targetFurniture
                 val f = fid?.let { id -> furniture.firstOrNull { it.id == id } }
                 // ボールは転がるので追いかける
-                if (f != null && f.kind == FurnitureKind.BALL) { p.targetX = f.x; p.targetY = f.y }
+                if (f != null && rolls(f.kind)) { p.targetX = f.x; p.targetY = f.y }
                 val arrived = hypot(p.targetX - p.x, p.targetY - p.y) < radius * (if (f != null) 0.6f else 0.9f) ||
-                    (f?.kind == FurnitureKind.BALL && hypot(f.x - p.x, f.y - p.y) < radius * 1.5f)
+                    (f != null && rolls(f.kind) && hypot(f.x - p.x, f.y - p.y) < radius * 1.5f)
                 // 寝床の近くまで来たら（先客がいて近づけなくても）そこで寝る
                 val nearBed = f != null && p.energy < 0.3f && f.kind in SLEEP_SPOTS && hypot(p.targetX - p.x, p.targetY - p.y) < radius * 1.8f
                 // 混んでいて近づけない時の見張り
@@ -1120,6 +1170,7 @@ class PetSim(seed: Int = 7) {
         FurnitureKind.TREE, FurnitureKind.STUMP, FurnitureKind.MUSHROOM, FurnitureKind.TENT, FurnitureKind.SUNFLOWER, FurnitureKind.DOGHOUSE -> true
         FurnitureKind.PHOTO -> true
         FurnitureKind.BLOODCELL, FurnitureKind.CELL, FurnitureKind.DNA, FurnitureKind.CAPSULE -> true
+        FurnitureKind.FOOD_LUMP, FurnitureKind.TUMOR, FurnitureKind.BATTERY, FurnitureKind.COIN, FurnitureKind.MARBLE -> true
         FurnitureKind.BOWL, FurnitureKind.WIDGET -> false
     }
 
@@ -1130,9 +1181,19 @@ class PetSim(seed: Int = 7) {
         FurnitureKind.PHOTO -> (f.x + rnd.range(-0.5f, 0.5f) * furnitureRadius(f)) to f.y + furnitureRadius(f) + radius * 1.1f
         // 木陰・テントや小屋の入り口
         FurnitureKind.TREE -> (f.x + (if (p.x < f.x) -1 else 1) * radius * 0.8f) to f.y + radius * 1.3f
-        FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> f.x to f.y + radius * 0.9f
-        FurnitureKind.MUSHROOM, FurnitureKind.SUNFLOWER -> (f.x + (if (p.x < f.x) -1 else 1) * radius * 1.4f) to f.y + radius * 0.3f
-        FurnitureKind.BALL -> f.x to f.y
+        // テント・小屋は中にもぐる（家具の後ろに描かれる）
+        FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> f.x to f.y - radius * 0.15f
+        FurnitureKind.MUSHROOM -> f.x to f.y - furnitureRadius(f) * 0.3f
+        FurnitureKind.SUNFLOWER -> (f.x + (if (p.x < f.x) -1 else 1) * radius * 1.4f) to f.y + radius * 0.3f
+        FurnitureKind.BALL, FurnitureKind.COIN, FurnitureKind.MARBLE -> f.x to f.y
+        // 上に乗る家具
+        FurnitureKind.TOWER -> f.x to f.y - furnitureRadius(f) * 0.45f
+        FurnitureKind.STUMP -> f.x to f.y - furnitureRadius(f) * 0.25f
+        // 腫瘍はみんなで囲んで攻撃
+        FurnitureKind.TUMOR, FurnitureKind.FOOD_LUMP -> {
+            val a = rnd.range(0f, 2f * PI.toFloat())
+            (f.x + cos(a) * furnitureRadius(f) * 1.2f) to (f.y + sin(a) * furnitureRadius(f) * 1.0f)
+        }
         FurnitureKind.PLANT, FurnitureKind.PALM, FurnitureKind.BUST, FurnitureKind.LAMP, FurnitureKind.CORAL, FurnitureKind.SEAWEED ->
             (f.x + (if (p.x < f.x) -1 else 1) * radius * 1.6f) to f.y + radius * 0.4f
         FurnitureKind.CASTLE, FurnitureKind.ROCK, FurnitureKind.CHEST, FurnitureKind.SHELL ->
@@ -1146,33 +1207,164 @@ class PetSim(seed: Int = 7) {
 
     /** 同時に使える数 */
     fun capacity(kind: FurnitureKind): Int = when (kind) {
-        FurnitureKind.TV, FurnitureKind.RUG -> 3
+        FurnitureKind.TV, FurnitureKind.RUG, FurnitureKind.TUMOR -> 3
+        FurnitureKind.FOOD_LUMP, FurnitureKind.COIN, FurnitureKind.MARBLE -> 2
         FurnitureKind.PHOTO, FurnitureKind.BALL, FurnitureKind.TREE, FurnitureKind.SOFA, FurnitureKind.PALM,
         FurnitureKind.CASTLE, FurnitureKind.CORAL, FurnitureKind.SEAWEED, FurnitureKind.BLOODCELL -> 2
         else -> 1
     }
 
     private fun useFurniture(p: Pet, f: FurnitureBody) {
+        p.targetFurniture = f.id
+        f.lookX = p.x
+        fun use(min: Float, max: Float, e: Emote? = null) {
+            setMood(p, Mood.USE, rnd.range(min, max))
+            p.talkTimer = 0f
+            if (e != null) emote(p, e, 1.5f)
+        }
         when (f.kind) {
-            FurnitureKind.BOWL -> { setMood(p, Mood.EAT, 6f); p.targetFurniture = f.id; p.targetFood = null }
-            FurnitureKind.BED, FurnitureKind.RUG -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id }
-            FurnitureKind.SOFA, FurnitureKind.TOWER -> { setMood(p, Mood.SIT, rnd.range(4f, 9f)); f.user = p.key; p.targetFurniture = f.id }
-            FurnitureKind.TV -> { setMood(p, Mood.WATCH, rnd.range(5f, 10f)); p.targetFurniture = f.id; p.heading = -PI.toFloat() / 2 }
-            FurnitureKind.BALL -> { setMood(p, Mood.PLAY, rnd.range(4f, 8f)); p.targetFurniture = f.id }
-            FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id }
-            FurnitureKind.TREE, FurnitureKind.STUMP -> { setMood(p, Mood.SIT, rnd.range(4f, 10f)); p.targetFurniture = f.id }
-            FurnitureKind.CELL -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id }
-            FurnitureKind.BLOODCELL -> { setMood(p, Mood.SIT, rnd.range(4f, 9f)); p.targetFurniture = f.id }
-            FurnitureKind.DNA, FurnitureKind.CAPSULE -> { setMood(p, Mood.IDLE, rnd.range(1.5f, 3f)); emote(p, if (f.kind == FurnitureKind.DNA) Emote.IDEA else Emote.CONFUSED, 1.5f) }
+            FurnitureKind.BOWL -> { setMood(p, Mood.EAT, 6f); p.targetFood = null }
+            FurnitureKind.BED -> {
+                // ベッドでぴょんぴょん → 疲れていたらそのまま寝る
+                if (p.energy < 0.5f) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key } else use(2.5f, 4.5f, Emote.HAPPY)
+            }
+            FurnitureKind.RUG -> if (p.energy < 0.4f) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key } else use(2.5f, 5f)
+            FurnitureKind.SOFA -> { setMood(p, Mood.SIT, rnd.range(4f, 9f)); f.user = p.key }
+            FurnitureKind.TOWER -> use(3f, 6f, Emote.MUSIC)
+            FurnitureKind.TV -> { setMood(p, Mood.WATCH, rnd.range(5f, 10f)); p.heading = -PI.toFloat() / 2; f.active = 999f }
+            FurnitureKind.BALL, FurnitureKind.COIN, FurnitureKind.MARBLE -> setMood(p, Mood.PLAY, rnd.range(4f, 8f))
+            FurnitureKind.TENT, FurnitureKind.DOGHOUSE, FurnitureKind.CELL -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key }
             FurnitureKind.PHOTO -> {
-                setMood(p, Mood.WATCH, rnd.range(3f, 6f)); p.targetFurniture = f.id
+                setMood(p, Mood.WATCH, rnd.range(3f, 6f))
                 p.heading = atan2(f.y - p.y, f.x - p.x)
                 emote(p, listOf(Emote.LOVE, Emote.HAPPY, Emote.SURPRISED, Emote.MUSIC).random(rnd), 1.8f)
             }
-            FurnitureKind.ROCK -> if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id } else { setMood(p, Mood.SIT, rnd.range(3f, 7f)); p.targetFurniture = f.id }
-            FurnitureKind.CASTLE, FurnitureKind.CHEST, FurnitureKind.SHELL ->
-                if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id } else setMood(p, Mood.IDLE, 2f)
-            else -> { setMood(p, Mood.IDLE, rnd.range(1.5f, 3f)); p.joy = 0.2f }
+            FurnitureKind.ROCK -> if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key } else use(3f, 6f)
+            FurnitureKind.CASTLE -> if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key } else use(2f, 4f, Emote.SURPRISED)
+            FurnitureKind.CHEST, FurnitureKind.SHELL -> use(3f, 5f, Emote.SURPRISED)
+            FurnitureKind.PLANT, FurnitureKind.SUNFLOWER -> use(3f, 5f, Emote.HAPPY)
+            FurnitureKind.LAMP -> {
+                use(1.5f, 2.5f)
+                // ランプをつけたり消したり
+                f.state = if (f.state > 0.5f) 0f else 1f
+                f.active = 0.6f
+                sfx(Sfx.PLACE, f.x, if (f.state > 0.5f) 1.5f else 0.9f, 0.6f)
+                emote(p, if (f.state > 0.5f) Emote.IDEA else Emote.SLEEPY, 1.4f)
+            }
+            FurnitureKind.TREE, FurnitureKind.PALM -> use(3f, 6f)
+            FurnitureKind.STUMP -> use(3f, 6f, Emote.MUSIC)
+            FurnitureKind.MUSHROOM -> use(3f, 5f, Emote.HAPPY)
+            FurnitureKind.BUST -> use(2.5f, 4f, Emote.IDEA)
+            FurnitureKind.CORAL, FurnitureKind.SEAWEED -> use(3f, 6f)
+            FurnitureKind.BLOODCELL -> use(3f, 6f)
+            FurnitureKind.DNA -> use(3f, 5f, Emote.IDEA)
+            FurnitureKind.CAPSULE -> use(3f, 5f, Emote.CONFUSED)
+            FurnitureKind.FOOD_LUMP -> use(4f, 7f, Emote.YUMMY)
+            FurnitureKind.TUMOR -> use(5f, 9f, Emote.ANGRY)
+            FurnitureKind.BATTERY -> use(3f, 5f, Emote.CONFUSED)
+            FurnitureKind.WIDGET -> setMood(p, Mood.IDLE, 1f)
+        }
+    }
+
+    /** 家具ごとの遊び方（USE の間、毎フレーム） */
+    private fun interact(p: Pet, f: FurnitureBody, dt: Float) {
+        f.active = max(f.active, 0.3f)
+        f.lookX = p.x
+        p.heading += angleDiff(p.heading, atan2(f.y - p.y, f.x - p.x)) * min(1f, dt * 3f)
+        p.talkTimer -= dt
+        val tick = p.talkTimer <= 0f
+        val r = furnitureRadius(f)
+        fun every(sec: Float) { if (tick) p.talkTimer = sec * rnd.range(0.8f, 1.2f) }
+        when (f.kind) {
+            FurnitureKind.BED, FurnitureKind.MUSHROOM -> if (tick) {
+                // トランポリン
+                every(if (f.kind == FurnitureKind.MUSHROOM) 0.7f else 0.9f)
+                p.hop = 1f; p.joy = 0.6f; f.active = 0.5f
+                sfx(Sfx.PICKUP, f.x, p.voice * 1.2f, 0.45f)
+            }
+            FurnitureKind.RUG -> { p.heading += dt * 7f; p.joy = max(p.joy, 0.3f); if (tick) { every(1.2f); speech(p, "ゴロゴロ") } }
+            FurnitureKind.TOWER -> if (tick) { every(1.1f); p.hop = 0.8f; particles += Particle(FxKind.NOTE, p.x, p.y - radius, 0f, -40f, 1.1f, 0.8f) }
+            FurnitureKind.PLANT, FurnitureKind.SUNFLOWER -> {
+                // 水やり：植物が少しずつ育つ
+                if (f.kind == FurnitureKind.PLANT) f.state = min(1f, f.state + dt * 0.06f)
+                if (tick) {
+                    every(0.35f)
+                    particles += Particle(FxKind.DROP, p.x + (f.x - p.x) * 0.5f, p.y - radius * 0.6f, (f.x - p.x) * 0.8f, -60f, 0.8f, rnd.range(0.6f, 1f))
+                    if (f.kind == FurnitureKind.SUNFLOWER && rnd.nextFloat() < 0.3f) particles += Particle(FxKind.CRUMB, f.x, f.y - r, rnd.range(-40f, 40f), -50f, 0.7f, 0.5f)
+                }
+            }
+            FurnitureKind.TREE, FurnitureKind.PALM -> if (tick) {
+                // 木をゆらすと葉っぱが落ちる
+                every(0.9f)
+                f.active = 0.6f
+                repeat(2) { particles += Particle(FxKind.LEAF, f.x + rnd.range(-r, r), f.y - r * 1.4f, 0f, 10f, 2.2f, rnd.range(0.7f, 1.1f)) }
+                if (rnd.nextFloat() < 0.25f) emote(p, Emote.SURPRISED, 1f)
+            }
+            FurnitureKind.STUMP -> if (tick) {
+                // 切り株ドラム
+                every(0.4f)
+                sfx(Sfx.KICK, f.x, rnd.range(0.6f, 0.9f), 0.6f)
+                particles += Particle(FxKind.NOTE, p.x + rnd.range(-10f, 10f), p.y - radius, rnd.range(-20f, 20f), -45f, 1f, 0.7f)
+                p.joy = 0.4f
+            }
+            FurnitureKind.BUST -> if (tick) {
+                // ポーズをまねる
+                every(1.2f)
+                p.stretch = 1f
+                emote(p, listOf(Emote.IDEA, Emote.CONFUSED, Emote.MUSIC).random(rnd), 1f, sound = false)
+            }
+            FurnitureKind.CHEST, FurnitureKind.SHELL, FurnitureKind.CASTLE -> if (tick) {
+                // 宝箱・貝が開いてきらきら
+                every(0.5f)
+                f.active = 1f
+                particles += Particle(if (f.kind == FurnitureKind.CHEST) FxKind.COINFX else FxKind.SPARK, f.x + rnd.range(-r, r) * 0.5f, f.y - r * 0.4f, rnd.range(-40f, 40f), -110f, 0.9f, 0.6f)
+                if (aquarium) particles += Particle(FxKind.BUBBLE, f.x, f.y - r * 0.5f, rnd.range(-5f, 5f), -60f, 2f, 0.6f)
+            }
+            FurnitureKind.CORAL, FurnitureKind.SEAWEED, FurnitureKind.ROCK -> if (tick) { every(1f); p.joy = 0.3f; if (aquarium) particles += Particle(FxKind.BUBBLE, p.x, p.y - radius * 0.4f, 0f, -50f, 2f, 0.5f) }
+            FurnitureKind.BLOODCELL -> if (tick) { every(0.8f); p.hop = 0.6f }
+            FurnitureKind.DNA -> if (tick) { every(1.1f); speech(p, listOf("ATGC", "GATTACA", "A-T", "G-C", "?").random(rnd)) }
+            FurnitureKind.CAPSULE -> {
+                // つつくと溶けて薬が出る → みんな元気に
+                f.state = max(0f, f.state - dt * 0.25f)
+                if (tick) { every(0.4f); particles += Particle(FxKind.SPARK, f.x + rnd.range(-r, r) * 0.5f, f.y, rnd.range(-30f, 30f), -40f, 0.8f, 0.5f) }
+                if (f.state <= 0f) {
+                    f.state = 0.001f
+                    pets.filter { hypot(it.x - f.x, it.y - f.y) < radius * 6f }.forEach { o -> o.energy = 1f; o.joy = 1f; emote(o, Emote.LOVE, 1.6f, sound = o === p) }
+                    p.moodLength = p.moodTime
+                }
+            }
+            FurnitureKind.FOOD_LUMP -> {
+                // もぐもぐ（少しずつ減って、そのうち元に戻る）
+                if (f.state > 0.05f) {
+                    f.state = max(0f, f.state - dt * 0.06f)
+                    p.fullness = min(1f, p.fullness + dt * 0.08f)
+                }
+                if (tick) { every(0.5f); particles += Particle(FxKind.CRUMB, f.x + rnd.range(-r, r) * 0.6f, f.y, rnd.range(-50f, 50f), -60f, 0.6f, 0.6f); sfx(Sfx.EAT, f.x, p.voice, 0.5f) }
+                if (f.state <= 0.05f) p.moodLength = p.moodTime
+            }
+            FurnitureKind.TUMOR -> {
+                // みんなで攻撃して小さくする
+                f.state = max(0.25f, f.state - dt * 0.05f)
+                if (tick) {
+                    every(0.45f)
+                    f.active = 0.4f
+                    p.hop = 0.5f
+                    repeat(2) { particles += Particle(FxKind.ZAP, f.x + rnd.range(-r, r) * 0.6f, f.y + rnd.range(-r, r) * 0.6f, 0f, 0f, 0.35f, rnd.range(0.6f, 1f)) }
+                    sfx(Sfx.KICK, f.x, rnd.range(0.7f, 1f), 0.5f)
+                    if (rnd.nextFloat() < 0.2f) emote(p, Emote.ANGRY, 1f, sound = false)
+                }
+                if (f.state <= 0.26f && rnd.nextFloat() < dt * 0.5f) emote(p, Emote.HAPPY, 1.2f)
+            }
+            FurnitureKind.BATTERY -> if (tick) {
+                // つつくとビリッ
+                every(1.3f)
+                f.active = 0.5f
+                p.hop = 1f
+                repeat(3) { particles += Particle(FxKind.ZAP, p.x + rnd.range(-radius, radius) * 0.5f, p.y - radius * 0.5f, 0f, 0f, 0.3f, 1f) }
+                emote(p, if (rnd.nextBoolean()) Emote.SURPRISED else Emote.SWEAT, 0.9f)
+                sfx(Sfx.SURPRISE, f.x, 1.6f, 0.6f)
+            }
+            else -> if (tick) { every(1.5f); p.joy = 0.2f }
         }
     }
 
