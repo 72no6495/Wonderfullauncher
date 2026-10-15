@@ -12,6 +12,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
+import com.wonderful.launcher.ui.pets.PetScreen
 import androidx.compose.runtime.getValue
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -31,6 +35,12 @@ class MainActivity : ComponentActivity() {
     /** すでにホーム画面が見えている状態か（他アプリから戻った時と区別する） */
     private var atHome = false
 
+    /** 飼育モードを表示中か */
+    private var inPetMode = false
+
+    /** 飼育モードを使える向きの設定か（「横固定」の時はいつも通常のホーム） */
+    private fun petModeAllowed(s: LauncherSettings) = s.pet.enabled && s.orientation != OrientationMode.LANDSCAPE
+
     /** 追加途中の Android ウィジェット（許可画面・設定画面から戻るまで保持） */
     private data class PendingWidget(
         val appWidgetId: Int,
@@ -47,15 +57,19 @@ class MainActivity : ComponentActivity() {
         setContent {
             val data by vm.data.collectAsStateWithLifecycle()
             val s = data.settings
-            LaunchedEffect(s.hideStatusBar, s.hideNavBar, s.orientation) { applySystemUi(s) }
-            HomeScreen(vm, onAddSystemWidget = ::startAddWidget)
+            LaunchedEffect(s.hideStatusBar, s.hideNavBar, s.orientation, s.pet.enabled, s.pet.ignoreRotationLock) { applySystemUi(s) }
+            // 横持ちの時だけ飼育モード。縦の時は飼育モードの画面ごと無いので、計算も描画も一切しない
+            val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+            val petMode = landscape && petModeAllowed(s)
+            SideEffect { inPetMode = petMode }
+            if (petMode) PetScreen(vm) else HomeScreen(vm, onAddSystemWidget = ::startAddWidget)
         }
     }
 
     /** ホーム画面表示中に HOME ボタンが押されたとき */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_HOME)) {
+        if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_HOME) && !inPetMode) {
             vm.onHomePressed(alreadyHome = atHome)
         }
     }
@@ -148,7 +162,12 @@ class MainActivity : ComponentActivity() {
         controller.isAppearanceLightNavigationBars = false
 
         requestedOrientation = when (s.orientation) {
-            OrientationMode.PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            // 飼育モードを使う時は横にもできるようにする（回転ロックに従うかは設定次第）
+            OrientationMode.PORTRAIT -> when {
+                !s.pet.enabled -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                s.pet.ignoreRotationLock -> ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                else -> ActivityInfo.SCREEN_ORIENTATION_USER
+            }
             OrientationMode.LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             OrientationMode.AUTO -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }

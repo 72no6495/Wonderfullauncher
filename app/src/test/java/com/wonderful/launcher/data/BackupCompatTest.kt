@@ -257,6 +257,52 @@ class BackupCompatTest {
     }
 
     @Test
+    fun oldBackupsHaveNoPetsAndDefaultPetSettings() {
+        for (v in 1..4) {
+            val d = BackupCodec.decode(fixture("backup_v$v.json"))
+            assertTrue(d.pets.isEmpty())
+            assertTrue(d.furniture.isEmpty())
+            assertEquals(PetConfig(), d.settings.pet)
+        }
+    }
+
+    @Test
+    fun petsAndFurnitureSurviveRoundTripAndAreSanitized() {
+        val pets = (0 until 14).map { PetEntry("p$it/.A", fullness = if (it == 0) Float.NaN else 2f, affection = -1f) } + PetEntry("p1/.A")
+        val furniture = listOf(
+            FurnitureItem("f1", FurnitureKind.BED, 1.5f, -0.2f, PetTheme.CASUAL),
+            FurnitureItem("f1", FurnitureKind.BALL, 0.5f, 0.5f, PetTheme.CASUAL),
+            FurnitureItem("f2", FurnitureKind.CASTLE, 0.3f, 0.9f, PetTheme.AQUARIUM),
+        )
+        val s = LauncherSettings(pet = PetConfig(theme = PetTheme.AQUARIUM, speed = 99f, fps = 7, legPairs = 9))
+        val d = BackupCodec.decode(BackupCodec.encode(LauncherData(settings = s, pets = pets, furniture = furniture)))
+        assertEquals(MAX_PETS, d.pets.size)
+        assertEquals(d.pets.map { it.key }.distinct(), d.pets.map { it.key })
+        assertTrue(d.pets.all { it.fullness in 0f..1f && it.affection in 0f..1f })
+        assertEquals(listOf("f1", "f2"), d.furniture.map { it.id })
+        assertEquals(1f, d.furniture[0].x, 0.001f)
+        assertEquals(0f, d.furniture[0].y, 0.001f)
+        assertEquals(PetTheme.AQUARIUM, d.settings.pet.theme)
+        assertEquals(3f, d.settings.pet.speed, 0.001f)
+        assertEquals(30, d.settings.pet.fps)
+        assertEquals(5, d.settings.pet.legPairs)
+    }
+
+    @Test
+    fun damagedPetEntryDoesNotBreakOthers() {
+        val text = """
+            {"pets":[{"key":"a/.A","fullness":0.5},{"fullness":"bad"},{"key":"b/.B"}],
+             "furniture":[{"id":"x","kind":"NOT_A_KIND"},{"id":"y","kind":"SOFA","x":0.2,"y":0.3}],
+             "settings":{"pet":{"theme":"AQUARIUM","speed":"fast"}}}
+        """.trimIndent()
+        val d = BackupCodec.decode(text)
+        assertEquals(listOf("a/.A", "b/.B"), d.pets.map { it.key })
+        assertTrue(d.furniture.any { it.id == "y" && it.kind == FurnitureKind.SOFA })
+        assertEquals(PetTheme.AQUARIUM, d.settings.pet.theme)
+        assertEquals(1f, d.settings.pet.speed, 0.001f)
+    }
+
+    @Test
     fun freeSpotAvoidsOverlap() {
         val ws = listOf(WidgetItem("a", x = 0, y = 0, w = 8, h = 2), WidgetItem("b", x = 0, y = 2, w = 4, h = 2))
         assertEquals(4 to 2, findFreeSpot(ws, 4, 2))

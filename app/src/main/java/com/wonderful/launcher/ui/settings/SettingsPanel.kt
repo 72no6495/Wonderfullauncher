@@ -113,6 +113,7 @@ private enum class Tab(val label: String) {
     LOOK("見た目"),
     EFFECTS("エフェクト"),
     CHARGE("充電"),
+    PETS("飼育"),
     PERFORMANCE("軽量化"),
     WALLPAPER("壁紙"),
     CLOCK("時計"),
@@ -182,6 +183,7 @@ fun SettingsPanel(
                         Tab.LOOK -> LookTab(s, update)
                         Tab.EFFECTS -> EffectsTab(s, update)
                         Tab.CHARGE -> ChargeTab(s, update, vm)
+                        Tab.PETS -> com.wonderful.launcher.ui.pets.PetSettingsContent(data.settings, vm, inPetMode = false)
                         Tab.PERFORMANCE -> PerformanceTab(s, update)
                         Tab.WALLPAPER -> WallpaperTab(s, update)
                         Tab.CLOCK -> ClockTab(s, update, data, vm) { widgetTarget = WidgetTarget.Top }

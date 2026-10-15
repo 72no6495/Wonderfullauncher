@@ -367,6 +367,85 @@ enum class OrientationMode(val label: String) {
     LANDSCAPE("横固定"),
 }
 
+// ─────────────────────────────────────────────
+// 飼育モード（横持ちの時だけ）
+// ─────────────────────────────────────────────
+
+enum class PetTheme(val label: String) {
+    CASUAL("カジュアル"),
+    VAPOR("ヴェイパー"),
+    AQUARIUM("アクアリウム"),
+}
+
+/** 置ける家具。※ 保存データに名前で入るので、名前の変更・削除はしないこと */
+enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boolean = false) {
+    BED("ベッド", "🛏"),
+    SOFA("ソファ", "🛋"),
+    BALL("ボール", "⚽"),
+    PLANT("観葉植物", "🪴"),
+    LAMP("ランプ", "💡"),
+    RUG("ラグ", "🟪"),
+    TOWER("やぐら", "🗼"),
+    TV("テレビ", "📺"),
+    BOWL("エサ皿", "🥣"),
+    PALM("ヤシの木", "🌴"),
+    BUST("石膏像", "🗿"),
+    ROCK("岩", "🪨", aquarium = true),
+    SEAWEED("水草", "🌿", aquarium = true),
+    CASTLE("お城", "🏰", aquarium = true),
+    CHEST("宝箱", "🧰", aquarium = true),
+    CORAL("サンゴ", "🪸", aquarium = true),
+    SHELL("貝", "🐚", aquarium = true),
+}
+
+@Serializable
+data class PetConfig(
+    /** 横持ちにすると飼育モードになる */
+    val enabled: Boolean = true,
+    val theme: PetTheme = PetTheme.CASUAL,
+    /** 動く速さ */
+    val speed: Float = 1f,
+    /** 大きさ */
+    val scale: Float = 1f,
+    /** 飼育モードの最大フレームレート */
+    val fps: Int = 30,
+    val showNames: Boolean = true,
+    /** 画面の回転ロック中でも横向きにする */
+    val ignoreRotationLock: Boolean = false,
+    /** お腹いっぱいからお腹ペコペコになるまでの時間 */
+    val hungerHours: Float = 6f,
+    /** 撫でた時などに振動 */
+    val haptic: Boolean = true,
+    /** 足の本数（片側） */
+    val legPairs: Int = 4,
+)
+
+/** 飼っているアプリ 1 体 */
+@Serializable
+data class PetEntry(
+    val key: String,
+    /** 満腹度 0〜1 */
+    val fullness: Float = 0.8f,
+    /** なつき度 0〜1 */
+    val affection: Float = 0.2f,
+    /** 最後に様子を保存した時刻（離れていた間にお腹が減る） */
+    val lastSeen: Long = 0,
+)
+
+/** 置いた家具。位置は画面に対する割合（0〜1） */
+@Serializable
+data class FurnitureItem(
+    val id: String,
+    val kind: FurnitureKind = FurnitureKind.BALL,
+    val x: Float = 0.5f,
+    val y: Float = 0.5f,
+    /** どの部屋に置いたか（カジュアル/ヴェイパーとアクアリウムで別） */
+    val room: PetTheme = PetTheme.CASUAL,
+)
+
+const val MAX_PETS = 10
+const val MAX_FURNITURE = 30
+
 /**
  * ランチャーの全設定。値を追加する場合はデフォルト値を必ず付ける
  * （古いバックアップやバージョンから読み込んでも壊れないように）。
@@ -549,6 +628,9 @@ data class LauncherSettings(
     val chargeOnUnplug: Boolean = false,
     val chargeHaptic: Boolean = true,
 
+    // ── 飼育モード ──
+    val pet: PetConfig = PetConfig(),
+
     // ── 軽量化 ──
     /** ぼかし・残像・粒・画面エフェクトなど重い演出をまとめて止める */
     val liteMode: Boolean = false,
@@ -615,6 +697,10 @@ data class LauncherData(
     val topWidget: WidgetItem? = null,
     /** ジェスチャーで呼び出すウィジェット（GestureSlot 名 → ウィジェット） */
     val gestureWidgets: Map<String, WidgetItem> = emptyMap(),
+    /** 飼育モードで飼っているアプリ（最大 [MAX_PETS]） */
+    val pets: List<PetEntry> = emptyList(),
+    /** 飼育モードに置いた家具 */
+    val furniture: List<FurnitureItem> = emptyList(),
     /**
      * 保存形式のバージョン。v1（最初のリリース）にはこの項目が無いので、
      * 読み込み時に無ければ 1 として扱いマイグレーションする。

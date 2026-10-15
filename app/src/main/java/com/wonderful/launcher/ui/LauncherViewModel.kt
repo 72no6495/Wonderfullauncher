@@ -29,6 +29,12 @@ import com.wonderful.launcher.data.WidgetItem
 import com.wonderful.launcher.data.WidgetKind
 import com.wonderful.launcher.data.WidgetManager
 import com.wonderful.launcher.data.findFreeSpot
+import com.wonderful.launcher.data.FurnitureItem
+import com.wonderful.launcher.data.FurnitureKind
+import com.wonderful.launcher.data.MAX_FURNITURE
+import com.wonderful.launcher.data.MAX_PETS
+import com.wonderful.launcher.data.PetEntry
+import com.wonderful.launcher.data.PetTheme
 import com.wonderful.launcher.data.WidgetTarget
 import com.wonderful.launcher.data.allWidgets
 import com.wonderful.launcher.data.mapAllWidgets
@@ -202,6 +208,58 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             store.update { d -> d.copy(sphereApps = keys.filter { it !in d.hiddenApps }) }
         }
     }
+
+    // ── 飼育モード ──
+
+    /** 飼う / やめる。いっぱい（[MAX_PETS] 体）なら false */
+    fun togglePet(key: String): Boolean {
+        var ok = true
+        store.update { d ->
+            when {
+                d.pets.any { it.key == key } -> d.copy(pets = d.pets.filterNot { it.key == key })
+                d.pets.size >= MAX_PETS -> { ok = false; d }
+                else -> d.copy(pets = d.pets + PetEntry(key, lastSeen = System.currentTimeMillis()))
+            }
+        }
+        return ok
+    }
+
+    /** おまかせ：球体のアプリから選ぶ */
+    fun autoPickPets(count: Int = 6) {
+        store.update { d ->
+            val now = System.currentTimeMillis()
+            val pool = (d.sphereApps + apps.value.map { it.key }).distinct().filter { k -> apps.value.any { it.key == k } }
+            d.copy(pets = pool.take(count.coerceAtMost(MAX_PETS)).map { PetEntry(it, lastSeen = now) })
+        }
+    }
+
+    /** 飼育モードを離れる時に、お腹の具合・なつき度・ボールの位置を保存 */
+    fun savePetState(stats: Map<String, Pair<Float, Float>>, balls: Map<String, Pair<Float, Float>>) {
+        val now = System.currentTimeMillis()
+        store.update { d ->
+            d.copy(
+                pets = d.pets.map { e -> stats[e.key]?.let { (f, a) -> e.copy(fullness = f, affection = a, lastSeen = now) } ?: e },
+                furniture = d.furniture.map { f -> balls[f.id]?.let { (x, y) -> f.copy(x = x, y = y) } ?: f },
+            )
+        }
+    }
+
+    fun addFurniture(kind: FurnitureKind, x: Float, y: Float, room: PetTheme): Boolean {
+        var ok = true
+        store.update { d ->
+            if (d.furniture.count { it.room == room } >= MAX_FURNITURE) { ok = false; d }
+            else d.copy(furniture = d.furniture + FurnitureItem(UUID.randomUUID().toString(), kind, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f), room))
+        }
+        return ok
+    }
+
+    fun moveFurniture(id: String, x: Float, y: Float) = store.update { d ->
+        d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(x = x.coerceIn(0f, 1f), y = y.coerceIn(0f, 1f)) else it })
+    }
+
+    fun removeFurniture(id: String) = store.update { d -> d.copy(furniture = d.furniture.filterNot { it.id == id }) }
+
+    fun clearFurniture(room: PetTheme) = store.update { d -> d.copy(furniture = d.furniture.filterNot { it.room == room }) }
 
     /** 設定画面からの「充電アニメーションを試す」 */
     private val _chargePreview = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
