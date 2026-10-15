@@ -39,57 +39,109 @@ private fun fr(x: Float) = x - floor(x)
 // 背景：血管の中
 // ─────────────────────────────────────────────
 
-fun DrawScope.drawBodyBackground(t: Float, unit: Float) {
+fun DrawScope.drawBodyBackground(sim: PetSim, t: Float, unit: Float) {
     val w = size.width
     val h = size.height
-    drawRect(Brush.radialGradient(listOf(Color(0xFFB23A48), Color(0xFF7A1C2C), Color(0xFF3E0A16)), Offset(w * 0.5f, h * 0.5f), max(w, h) * 0.7f))
-    // 血の流れ（ゆっくり右へ）
-    for (k in 0 until 6) {
-        val y = h * (0.12f + k * 0.16f) + sin(t * 0.4f + k) * unit * 10f
-        val x0 = fr(t * 0.03f + k * 0.27f) * (w + unit * 400f) - unit * 400f
-        drawRoundRect(Color.White.copy(alpha = 0.04f), Offset(x0, y), Size(unit * 380f, unit * 18f), CornerRadius(unit * 9f))
+    // 粘膜の地の色（収縮しているところは濃く）
+    drawRect(Brush.radialGradient(listOf(Color(0xFFD9707F), Color(0xFFB04556), Color(0xFF6E1E2E)), Offset(w * 0.5f, h * 0.5f), max(w, h) * 0.75f))
+    // ぜん動の波：各位置の「縮み具合」と、波に押されてずれる量
+    val lambda = max(1f, sim.right - sim.left) / 1.6f
+    fun squeeze(x: Float) = sim.gutWave(x)
+    fun shift(x: Float) = -sin(2f * PI.toFloat() * ((x - sim.left) / lambda - sim.time * 0.22f) + PI.toFloat() / 2f) * unit * 14f
+
+    // 収縮の帯（暗く陰になる）
+    var x = 0f
+    val step = unit * 12f
+    while (x < w) {
+        val q = squeeze(x)
+        if (q > 0.05f) drawRect(Color(0xFF4A0E1C).copy(alpha = 0.28f * q), Offset(x, 0f), Size(step + 1f, h))
+        x += step
     }
-    // 奥を流れる赤血球
-    for (i in 0 until 10) {
-        val sp = 0.025f + (i % 4) * 0.008f
-        val x = fr(t * sp + i * 0.137f) * (w + unit * 120f) - unit * 60f
-        val y = h * fr(i * 0.618f + 0.1f) + sin(t * 0.7f + i) * unit * 12f
-        val rr = unit * (14f + (i % 3) * 5f)
-        val squash = 0.55f + 0.45f * abs(sin(t * 0.5f + i))
-        rotate((t * 20f + i * 40f) % 360f, Offset(x, y)) {
-            drawOval(Color(0xFFD32F2F).copy(alpha = 0.35f), Offset(x - rr, y - rr * squash), Size(rr * 2, rr * 2 * squash))
-            drawOval(Color(0xFF8E1B1B).copy(alpha = 0.3f), Offset(x - rr * 0.45f, y - rr * 0.45f * squash), Size(rr * 0.9f, rr * 0.9f * squash))
+
+    // 輪状ヒダ（縦に走る大きなしわ。波で寄ったり離れたりする）
+    val folds = 9
+    for (i in 0 until folds) {
+        val bx = w * (i + 0.5f) / folds
+        val fx = bx + shift(bx) * 2.2f
+        val q = squeeze(bx)
+        val path = Path()
+        var y = 0f
+        path.moveTo(fx + sin(i * 1.7f) * unit * 10f, 0f)
+        while (y <= h) {
+            path.lineTo(fx + sin(y / (unit * 60f) + i * 1.7f + t * 0.6f) * unit * (10f + 8f * q), y)
+            y += unit * 14f
         }
+        drawPath(path, Color(0xFF5A1424).copy(alpha = 0.22f + 0.25f * q), style = Stroke(unit * (16f + 14f * q), cap = StrokeCap.Round))
+        drawPath(path, Color(0xFFFFC1CB).copy(alpha = 0.18f + 0.12f * q), style = Stroke(unit * (3f + 2f * q), cap = StrokeCap.Round))
     }
-    // 血小板・小さな粒
-    for (i in 0 until 26) {
-        val x = fr(t * (0.02f + (i % 5) * 0.006f) + i * 0.381966f) * w
-        val y = h * fr(i * 0.754877f + 0.33f) + sin(t + i) * unit * 6f
-        drawCircle(Color(0xFFFFCDD2).copy(alpha = 0.25f), unit * (1.5f + i % 3), Offset(x, y))
+
+    // 絨毛（粘膜の表面のつぶつぶ）：波に押されて寄り、ふくらみ、ゆらゆら揺れる
+    val gap = unit * 26f
+    var row = 0
+    var gy = gap * 0.5f
+    while (gy < h) {
+        var gx = (if (row % 2 == 0) 0f else gap * 0.5f)
+        while (gx < w + gap) {
+            val jx = gx + (fr(gx * 0.0137f + gy * 0.0071f) - 0.5f) * gap * 0.5f
+            val jy = gy + (fr(gx * 0.0091f + gy * 0.0153f) - 0.5f) * gap * 0.5f
+            val q = squeeze(jx)
+            val sway = sin(t * 1.6f + jx * 0.02f + jy * 0.03f) * unit * 2.5f
+            val cx = jx + shift(jx) + sway
+            val cy = jy + cos(t * 1.3f + jx * 0.025f) * unit * 2f + (jy - h / 2) * 0.05f * q
+            val rr = unit * (6.5f + 3f * q)
+            drawCircle(lerp(Color(0xFFF4A3B0), Color(0xFFB8394F), q * 0.8f), rr, Offset(cx, cy))
+            drawCircle(Color.White.copy(alpha = 0.35f - 0.15f * q), rr * 0.35f, Offset(cx - rr * 0.3f, cy - rr * 0.35f))
+            gx += gap
+        }
+        gy += gap * 0.86f
+        row++
     }
-    // 上と下の壁の柔毛（ゆらゆら）
+
+    // 内容物・粘液の粒（波のところで速く流れる）
+    for (i in 0 until 24) {
+        val baseX = fr(t * (0.018f + (i % 5) * 0.004f) + i * 0.381966f) * (w + unit * 60f) - unit * 30f
+        val px = baseX + squeeze(baseX) * unit * 30f
+        val py = h * fr(i * 0.754877f + 0.33f) + sin(t + i) * unit * 6f
+        drawCircle(Color(0xFFFFF3C4).copy(alpha = 0.22f), unit * (2f + i % 3), Offset(px, py))
+    }
+
+    // 上下の腸壁：縮んだところでぐっと迫り出し、長い絨毛がなびく
     for (edge in 0..1) {
-        val baseY = if (edge == 0) 0f else h
         val dir = if (edge == 0) 1f else -1f
-        var x = -unit * 10f
+        val baseY = if (edge == 0) 0f else h
+        val wall = Path()
+        wall.moveTo(-unit * 10f, baseY)
+        var wx = -unit * 10f
+        while (wx <= w + unit * 10f) {
+            val d = unit * (14f + 34f * squeeze(wx)) + sin(wx / (unit * 40f) + t) * unit * 3f
+            wall.lineTo(wx, baseY + dir * d)
+            wx += unit * 10f
+        }
+        wall.lineTo(w + unit * 10f, baseY)
+        wall.close()
+        drawPath(wall, Color(0xFF8E2236))
+        drawPath(wall, Color(0xFFFFB3C0).copy(alpha = 0.35f), style = Stroke(unit * 1.5f))
+        var fx = -unit * 10f
         var i = 0
-        while (x < w + unit * 20f) {
-            val len = unit * (26f + (i * 37 % 5) * 6f)
-            val sway = sin(t * 1.1f + i * 0.7f) * unit * 6f
+        while (fx < w + unit * 20f) {
+            val q = squeeze(fx)
+            val rootY = baseY + dir * (unit * (14f + 34f * q))
+            val len = unit * (22f + (i * 37 % 5) * 5f) * (1f - 0.35f * q)
+            // 波の進む方向へなびく
+            val lean = (shift(fx + unit * 20f) - shift(fx)) * 1.6f + sin(t * 1.8f + i * 0.6f) * unit * 4f
             val path = Path().apply {
-                moveTo(x - unit * 9f, baseY)
-                quadraticTo(x - unit * 10f + sway * 0.5f, baseY + dir * len * 0.6f, x + sway, baseY + dir * len)
-                quadraticTo(x + unit * 10f + sway * 0.5f, baseY + dir * len * 0.6f, x + unit * 9f, baseY)
+                moveTo(fx - unit * 7f, rootY)
+                quadraticTo(fx - unit * 8f + lean * 0.4f, rootY + dir * len * 0.6f, fx + lean, rootY + dir * len)
+                quadraticTo(fx + unit * 8f + lean * 0.4f, rootY + dir * len * 0.6f, fx + unit * 7f, rootY)
                 close()
             }
-            drawPath(path, Color(0xFFE57373))
-            drawPath(path, Color(0xFFFFCDD2).copy(alpha = 0.45f), style = Stroke(unit * 1.2f))
-            x += unit * 20f
+            drawPath(path, lerp(Color(0xFFEF8A9A), Color(0xFFC2425A), q))
+            drawPath(path, Color(0xFFFFD6DD).copy(alpha = 0.4f), style = Stroke(unit * 1f))
+            fx += unit * 16f
             i++
         }
-        drawRect(Color(0xFFC62828), Offset(0f, if (edge == 0) 0f else h - unit * 6f), Size(w, unit * 6f))
     }
-    drawRect(Brush.radialGradient(listOf(Color.Transparent, Color(0x66200008)), Offset(w / 2, h / 2), max(w, h) * 0.75f))
+    drawRect(Brush.radialGradient(listOf(Color.Transparent, Color(0x55200008)), Offset(w / 2, h / 2), max(w, h) * 0.75f))
 }
 
 // ─────────────────────────────────────────────
@@ -368,4 +420,115 @@ fun DrawScope.drawBloodCell(c: Offset, rr: Float, unit: Float) {
     drawCircle(Color(0xFF8E1B1B).copy(alpha = 0.45f), rr * 0.45f, c)
     drawCircle(Color(0xFF7F0000), rr, c, style = Stroke(unit * 1.5f))
     drawArc(Color.White.copy(alpha = 0.35f), 200f, 70f, false, Offset(c.x - rr * 0.8f, c.y - rr * 0.8f), Size(rr * 1.6f, rr * 1.6f), style = Stroke(unit * 2f, cap = StrokeCap.Round))
+}
+
+// ─────────────────────────────────────────────
+// 腸の中にある物（家具）
+// ─────────────────────────────────────────────
+
+/** 悪性腫瘍：ぼこぼこした塊。脈打ち、攻撃されると小さくなる */
+fun DrawScope.drawTumor(f: FurnitureBody, r: Float, t: Float, unit: Float) {
+    val k = 0.35f + 0.65f * f.state
+    val pulse = 1f + 0.05f * sin(t * 3.2f + f.fx)
+    val hit = (f.active / 0.4f).coerceIn(0f, 1f)
+    val c = Offset(f.x, f.y)
+    val base = r * 1.05f * k * pulse
+    // 栄養を取る血管
+    for (i in 0 until 6) {
+        val a = i * 1.047f + 0.3f
+        val path = Path().apply {
+            moveTo(c.x, c.y)
+            quadraticTo(c.x + cos(a + 0.4f) * base * 1.2f, c.y + sin(a + 0.4f) * base * 1.2f, c.x + cos(a) * base * 1.9f, c.y + sin(a) * base * 1.9f)
+        }
+        drawPath(path, Color(0xFF7B1F2E).copy(alpha = 0.7f), style = Stroke(unit * 2.2f, cap = StrokeCap.Round))
+    }
+    // こぶの集まり
+    val lumps = listOf(0f to 0f to 1f, 0.55f to -0.3f to 0.62f, -0.5f to -0.35f to 0.58f, 0.35f to 0.5f to 0.6f, -0.45f to 0.4f to 0.55f, 0.05f to -0.65f to 0.5f, 0.75f to 0.2f to 0.45f)
+    lumps.forEachIndexed { i, (pos, s) ->
+        val wob = 1f + 0.06f * sin(t * 2.3f + i * 1.9f)
+        val o = Offset(c.x + pos.first * base, c.y + pos.second * base)
+        val rr = base * 0.62f * s * wob
+        drawCircle(Brush.radialGradient(listOf(Color(0xFFB0577A), Color(0xFF6A1B4D), Color(0xFF3E0F2B)), o - Offset(rr * 0.3f, rr * 0.3f), rr * 1.3f), rr, o)
+        drawCircle(Color.White.copy(alpha = 0.18f), rr * 0.25f, o - Offset(rr * 0.35f, rr * 0.4f))
+    }
+    // 不気味な目（攻撃されるとひるむ）
+    for (side in intArrayOf(-1, 1)) {
+        val e = Offset(c.x + side * base * 0.22f, c.y - base * 0.1f)
+        drawOval(Color(0xFFFFEB3B), Offset(e.x - base * 0.1f, e.y - base * 0.06f * (1f - hit * 0.8f)), Size(base * 0.2f, base * 0.12f * (1f - hit * 0.8f)))
+        drawCircle(Color.Black, base * 0.035f, e)
+    }
+    if (hit > 0f) drawCircle(Color.White.copy(alpha = 0.35f * hit), base * 1.1f, c)
+}
+
+/** 食べ物（消化中のかたまり）：食べられると小さくなる */
+fun DrawScope.drawFoodLump(f: FurnitureBody, r: Float, t: Float, unit: Float) {
+    val k = 0.3f + 0.7f * f.state
+    val c = Offset(f.x, f.y)
+    val base = r * 0.95f * k
+    drawOval(Color(0x33000000), Offset(c.x - base, c.y + base * 0.5f), Size(base * 2f, base * 0.6f))
+    val blobs = listOf(-0.3f to 0f, 0.3f to 0.05f, 0f to -0.25f, -0.1f to 0.25f, 0.35f to -0.25f)
+    blobs.forEachIndexed { i, (dx, dy) ->
+        val wob = 1f + 0.04f * sin(t * 1.7f + i)
+        drawCircle(Brush.radialGradient(listOf(Color(0xFFE6C27A), Color(0xFFB5833E)), Offset(c.x + dx * base, c.y + dy * base), base * 0.7f), base * 0.58f * wob, Offset(c.x + dx * base, c.y + dy * base))
+    }
+    // 中に見える食べ物のかけら（コーン・葉っぱ・ごはん）
+    val bits = listOf(Color(0xFFFFEB3B), Color(0xFF66BB6A), Color.White, Color(0xFFFF7043), Color(0xFFFFEB3B), Color.White)
+    bits.forEachIndexed { i, col ->
+        val a = i * 1.1f + 0.4f
+        val o = Offset(c.x + cos(a) * base * 0.45f, c.y + sin(a) * base * 0.35f)
+        drawOval(col, Offset(o.x - base * 0.09f, o.y - base * 0.06f), Size(base * 0.18f, base * 0.12f))
+    }
+    drawCircle(Color.White.copy(alpha = 0.2f), base * 0.25f, Offset(c.x - base * 0.35f, c.y - base * 0.35f))
+}
+
+/** 電池（飲み込まれた異物）：さびて汁が出ていて、つつくとビリッ */
+fun DrawScope.drawBatteryItem(f: FurnitureBody, r: Float, t: Float, unit: Float) {
+    val c = Offset(f.x, f.y)
+    val len = r * 2.1f
+    val wid = r * 0.85f
+    val hit = (f.active / 0.5f).coerceIn(0f, 1f)
+    // 漏れた液
+    drawOval(Color(0x5581C784), Offset(c.x - len * 0.45f, c.y + wid * 0.1f), Size(len * 0.9f, wid * 0.7f))
+    rotate(-18f, c) {
+        val tl = Offset(c.x - len / 2, c.y - wid / 2)
+        drawRoundRect(Brush.verticalGradient(listOf(Color(0xFF616161), Color(0xFF212121), Color(0xFF424242)), tl.y, tl.y + wid), tl, Size(len * 0.78f, wid), CornerRadius(wid * 0.18f))
+        drawRoundRect(Brush.verticalGradient(listOf(Color(0xFFFFCC80), Color(0xFFE65100), Color(0xFFFFB74D)), tl.y, tl.y + wid), Offset(tl.x + len * 0.72f, tl.y), Size(len * 0.24f, wid), CornerRadius(wid * 0.18f))
+        drawRoundRect(Color(0xFFBDBDBD), Offset(tl.x + len * 0.96f, c.y - wid * 0.16f), Size(len * 0.06f, wid * 0.32f), CornerRadius(unit * 2f))
+        drawLine(Color.White, Offset(tl.x + len * 0.15f, c.y), Offset(tl.x + len * 0.3f, c.y), unit * 2.5f)
+        drawLine(Color.White, Offset(tl.x + len * 0.55f, c.y - wid * 0.12f), Offset(tl.x + len * 0.55f, c.y + wid * 0.12f), unit * 2.5f)
+        drawLine(Color.White, Offset(tl.x + len * 0.48f, c.y), Offset(tl.x + len * 0.62f, c.y), unit * 2.5f)
+        // さび
+        for (i in 0 until 5) drawCircle(Color(0xFFD7E7C0).copy(alpha = 0.8f), wid * (0.08f + (i % 2) * 0.04f), Offset(tl.x + len * (0.05f + i * 0.17f), tl.y + wid * (0.15f + (i * 37 % 7) / 10f)))
+    }
+    if (hit > 0f) drawCircle(Brush.radialGradient(listOf(Color(0x88FFF176), Color.Transparent), c, r * 1.8f), r * 1.8f * hit, c)
+}
+
+/** コイン（転がる） */
+fun DrawScope.drawCoin(f: FurnitureBody, r: Float, unit: Float) {
+    val c = Offset(f.x, f.y)
+    val rr = r * 0.9f
+    // 転がっている時は縦につぶれて見える
+    val sq = 0.55f + 0.45f * abs(cos(f.spin))
+    drawOval(Color(0x33000000), Offset(c.x - rr, c.y + rr * 0.6f), Size(rr * 2f, rr * 0.5f))
+    drawOval(Brush.radialGradient(listOf(Color(0xFFFFF59D), Color(0xFFFFC107), Color(0xFFB8860B)), c - Offset(rr * 0.3f, rr * 0.3f), rr * 1.4f), Offset(c.x - rr * sq, c.y - rr), Size(rr * 2f * sq, rr * 2f))
+    drawOval(Color(0xFF8D6E00), Offset(c.x - rr * sq * 0.72f, c.y - rr * 0.72f), Size(rr * 1.44f * sq, rr * 1.44f), style = Stroke(unit * 1.5f))
+    drawOval(Color(0xFF8D6E00), Offset(c.x - rr * sq, c.y - rr), Size(rr * 2f * sq, rr * 2f), style = Stroke(unit * 1.5f))
+}
+
+/** ビー玉（転がる） */
+fun DrawScope.drawMarble(f: FurnitureBody, r: Float, t: Float, unit: Float) {
+    val c = Offset(f.x, f.y)
+    val rr = r * 0.75f
+    drawOval(Color(0x33000000), Offset(c.x - rr, c.y + rr * 0.6f), Size(rr * 2f, rr * 0.45f))
+    drawCircle(Color(0x8880DEEA), rr, c)
+    rotate(f.spin * 57.3f, c) {
+        val swirl = Path().apply {
+            moveTo(c.x - rr * 0.7f, c.y)
+            cubicTo(c.x - rr * 0.2f, c.y - rr * 0.8f, c.x + rr * 0.2f, c.y + rr * 0.8f, c.x + rr * 0.7f, c.y)
+        }
+        drawPath(swirl, Color(0xFFFF4081), style = Stroke(rr * 0.25f, cap = StrokeCap.Round))
+        drawPath(swirl, Color(0xFFFFEB3B), style = Stroke(rr * 0.08f, cap = StrokeCap.Round))
+    }
+    drawCircle(Color.White.copy(alpha = 0.5f), rr, c, style = Stroke(unit * 1.2f))
+    drawCircle(Color.White.copy(alpha = 0.8f), rr * 0.22f, Offset(c.x - rr * 0.35f, c.y - rr * 0.4f))
 }

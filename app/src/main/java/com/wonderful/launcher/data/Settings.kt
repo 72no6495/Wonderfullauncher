@@ -466,6 +466,11 @@ enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boo
     CELL("細胞", "🧫", body = true),
     DNA("DNA", "🧬", body = true),
     CAPSULE("カプセル", "💊", body = true),
+    FOOD_LUMP("食べ物", "🍙", body = true),
+    TUMOR("悪性腫瘍", "🟣", body = true),
+    BATTERY("電池", "🔋", body = true),
+    COIN("コイン", "🪙", body = true),
+    MARBLE("ビー玉", "🔮", body = true),
     /** 好きな写真（写真立て） */
     PHOTO("写真", "🖼"),
     /** 好きなウィジェット */

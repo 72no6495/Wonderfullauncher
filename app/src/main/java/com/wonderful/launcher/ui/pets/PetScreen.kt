@@ -534,7 +534,15 @@ private fun PetRoom(
                     val icon = icons[p.key]
                     val tint = tints.getOrPut(p.key) { iconTint(icon) }
                     val look = looks[p.key] ?: cfg.lookFor(null, p.key)
-                    items += (p.y + p.lift * sim.radius * 3f) to {
+                    // 家具の上に乗っている子は家具より手前、テントや小屋の中の子は奥に描く
+                    val onF = sim.furniture.firstOrNull { it.id == p.targetFurniture }
+                    val key = when {
+                        onF == null || p.mood !in setOf(Mood.USE, Mood.SIT, Mood.SLEEP) -> p.y + p.lift * sim.radius * 3f
+                        onF.kind == FurnitureKind.TENT || onF.kind == FurnitureKind.DOGHOUSE -> onF.y - 1f
+                        onF.kind in ON_TOP -> onF.y + 1f
+                        else -> p.y + p.lift * sim.radius * 3f
+                    }
+                    items += key to {
                         when {
                             theme != PetTheme.BODY -> drawSpider(p, sim, icon, tint, look, colors, theme, t, unit)
                             cfg.microbe == MicrobeStyle.PHAGE -> drawPhage(p, sim, icon, tint, look, colors, t, unit)
@@ -1202,3 +1210,9 @@ fun widgetSizePx(item: com.wonderful.launcher.data.FurnitureItem, density: Float
     val cell = 40f * density * item.scale
     return (w.w * cell) to (w.h * cell)
 }
+
+/** 上に乗って遊ぶ家具 */
+private val ON_TOP = setOf(
+    FurnitureKind.BED, FurnitureKind.SOFA, FurnitureKind.RUG, FurnitureKind.TOWER, FurnitureKind.STUMP,
+    FurnitureKind.MUSHROOM, FurnitureKind.ROCK, FurnitureKind.BLOODCELL, FurnitureKind.CELL,
+)
