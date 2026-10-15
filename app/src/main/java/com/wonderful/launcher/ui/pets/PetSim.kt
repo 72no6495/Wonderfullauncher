@@ -205,7 +205,7 @@ class PetSim(seed: Int = 7) {
 
     fun furnitureRadius(kind: FurnitureKind): Float = radius * when (kind) {
         FurnitureKind.BALL -> 0.45f
-        FurnitureKind.BED, FurnitureKind.SOFA, FurnitureKind.RUG, FurnitureKind.CASTLE -> 1.3f
+        FurnitureKind.BED, FurnitureKind.SOFA, FurnitureKind.RUG, FurnitureKind.CASTLE, FurnitureKind.TREE, FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> 1.3f
         FurnitureKind.TV, FurnitureKind.TOWER, FurnitureKind.ROCK, FurnitureKind.CHEST -> 0.95f
         FurnitureKind.BOWL, FurnitureKind.SHELL -> 0.6f
         else -> 0.8f
@@ -528,14 +528,20 @@ class PetSim(seed: Int = 7) {
 
     private fun FurnitureKind.usable(aq: Boolean): Boolean = when (this) {
         FurnitureKind.BED, FurnitureKind.SOFA, FurnitureKind.RUG, FurnitureKind.TOWER, FurnitureKind.TV, FurnitureKind.BALL -> true
-        FurnitureKind.CASTLE, FurnitureKind.ROCK, FurnitureKind.CHEST, FurnitureKind.CORAL, FurnitureKind.SEAWEED, FurnitureKind.SHELL -> aq
+        FurnitureKind.CASTLE, FurnitureKind.CHEST, FurnitureKind.CORAL, FurnitureKind.SEAWEED, FurnitureKind.SHELL -> aq
+        FurnitureKind.ROCK -> true
         FurnitureKind.PLANT, FurnitureKind.PALM, FurnitureKind.BUST, FurnitureKind.LAMP -> true
+        FurnitureKind.TREE, FurnitureKind.STUMP, FurnitureKind.MUSHROOM, FurnitureKind.TENT, FurnitureKind.SUNFLOWER, FurnitureKind.DOGHOUSE -> true
         FurnitureKind.BOWL -> false
     }
 
     /** 家具のどこに行くか */
     private fun spotFor(p: Pet, f: FurnitureBody): Pair<Float, Float> = when (f.kind) {
         FurnitureKind.TV -> f.x to f.y + radius * 2.4f
+        // 木陰・テントや小屋の入り口
+        FurnitureKind.TREE -> (f.x + (if (p.x < f.x) -1 else 1) * radius * 0.8f) to f.y + radius * 1.3f
+        FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> f.x to f.y + radius * 0.9f
+        FurnitureKind.MUSHROOM, FurnitureKind.SUNFLOWER -> (f.x + (if (p.x < f.x) -1 else 1) * radius * 1.4f) to f.y + radius * 0.3f
         FurnitureKind.BALL -> f.x to f.y
         FurnitureKind.PLANT, FurnitureKind.PALM, FurnitureKind.BUST, FurnitureKind.LAMP, FurnitureKind.CORAL, FurnitureKind.SEAWEED ->
             (f.x + (if (p.x < f.x) -1 else 1) * radius * 1.6f) to f.y + radius * 0.4f
@@ -551,7 +557,10 @@ class PetSim(seed: Int = 7) {
             FurnitureKind.SOFA, FurnitureKind.TOWER -> { setMood(p, Mood.SIT, rnd.range(4f, 9f)); f.user = p.key; p.targetFurniture = f.id }
             FurnitureKind.TV -> { setMood(p, Mood.WATCH, rnd.range(5f, 10f)); p.targetFurniture = f.id; p.heading = -PI.toFloat() / 2 }
             FurnitureKind.BALL -> { setMood(p, Mood.PLAY, rnd.range(4f, 8f)); p.targetFurniture = f.id }
-            FurnitureKind.CASTLE, FurnitureKind.ROCK, FurnitureKind.CHEST, FurnitureKind.SHELL ->
+            FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id }
+            FurnitureKind.TREE, FurnitureKind.STUMP -> { setMood(p, Mood.SIT, rnd.range(4f, 10f)); p.targetFurniture = f.id }
+            FurnitureKind.ROCK -> if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(4f, 9f)); p.targetFurniture = f.id } else { setMood(p, Mood.SIT, rnd.range(3f, 7f)); p.targetFurniture = f.id }
+            FurnitureKind.CASTLE, FurnitureKind.CHEST, FurnitureKind.SHELL ->
                 if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(4f, 9f)); p.targetFurniture = f.id } else setMood(p, Mood.IDLE, 2f)
             else -> { setMood(p, Mood.IDLE, rnd.range(1.5f, 3f)); p.joy = 0.2f }
         }

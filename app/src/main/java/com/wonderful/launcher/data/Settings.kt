@@ -375,10 +375,62 @@ enum class PetTheme(val label: String) {
     CASUAL("カジュアル"),
     VAPOR("ヴェイパー"),
     AQUARIUM("アクアリウム"),
+    MEADOW("野原"),
+}
+
+/** 目の種類。MIXED は「1 体ずつバラバラ」 */
+enum class EyeStyle(val label: String) {
+    GOOGLY("ぎょろ目"),
+    DOTS("つぶら"),
+    ANIME("キラキラ"),
+    SMILE("にっこり"),
+    SLEEPY("ねむそう"),
+    ANGRY("つり目"),
+    CYCLOPS("ひとつ目"),
+    SPIDER("クモの8つ目"),
+    HEART("ハート"),
+    STAR("ほし"),
+    BUTTON("ボタン"),
+    SHADES("サングラス"),
+    MIXED("バラバラ"),
+}
+
+/** 頭につける物 */
+enum class Accessory(val label: String) {
+    NONE("なし"),
+    RIBBON("リボン"),
+    TOPHAT("シルクハット"),
+    CROWN("王冠"),
+    PARTY("パーティー帽"),
+    FLOWER("お花"),
+    HEADPHONES("ヘッドホン"),
+    ANTENNA("アンテナ"),
+    HALO("天使の輪"),
+    CAT_EARS("ネコ耳"),
+    BEANIE("ニット帽"),
+    MIXED("バラバラ"),
+}
+
+/** 足の見た目 */
+enum class LegStyle(val label: String) {
+    THIN("ふつう"),
+    HAIRY("もじゃもじゃ"),
+    ROBOT("メカ"),
+    CANDY("しましま"),
+    STUBBY("ずんぐり"),
+    MIXED("バラバラ"),
+}
+
+/** 足の色 */
+enum class LegColor(val label: String) {
+    THEME("テーマの色"),
+    ICON("アイコンの色"),
+    RAINBOW("虹色"),
+    MIXED("バラバラ"),
 }
 
 /** 置ける家具。※ 保存データに名前で入るので、名前の変更・削除はしないこと */
-enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boolean = false) {
+enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boolean = false, val outdoor: Boolean = false) {
     BED("ベッド", "🛏"),
     SOFA("ソファ", "🛋"),
     BALL("ボール", "⚽"),
@@ -396,6 +448,19 @@ enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boo
     CHEST("宝箱", "🧰", aquarium = true),
     CORAL("サンゴ", "🪸", aquarium = true),
     SHELL("貝", "🐚", aquarium = true),
+    TREE("木", "🌳", outdoor = true),
+    STUMP("切り株", "🪵", outdoor = true),
+    MUSHROOM("キノコ", "🍄", outdoor = true),
+    TENT("テント", "⛺", outdoor = true),
+    SUNFLOWER("ひまわり", "🌻", outdoor = true),
+    DOGHOUSE("小屋", "🛖", outdoor = true),
+}
+
+/** その部屋（テーマ）に置ける家具か */
+fun FurnitureKind.availableIn(room: PetTheme): Boolean = when (room) {
+    PetTheme.AQUARIUM -> aquarium || this == FurnitureKind.BALL
+    PetTheme.MEADOW -> outdoor || this in setOf(FurnitureKind.BALL, FurnitureKind.BOWL, FurnitureKind.RUG, FurnitureKind.ROCK, FurnitureKind.PALM)
+    PetTheme.CASUAL, PetTheme.VAPOR -> !aquarium && !outdoor
 }
 
 @Serializable
@@ -418,6 +483,10 @@ data class PetConfig(
     val haptic: Boolean = true,
     /** 足の本数（片側） */
     val legPairs: Int = 4,
+    val eyes: EyeStyle = EyeStyle.MIXED,
+    val accessory: Accessory = Accessory.MIXED,
+    val legStyle: LegStyle = LegStyle.THIN,
+    val legColor: LegColor = LegColor.THEME,
 )
 
 /** 飼っているアプリ 1 体 */
@@ -430,6 +499,28 @@ data class PetEntry(
     val affection: Float = 0.2f,
     /** 最後に様子を保存した時刻（離れていた間にお腹が減る） */
     val lastSeen: Long = 0,
+    /** 着せ替え（null = 飼育モードの設定に従う） */
+    val eyes: EyeStyle? = null,
+    val accessory: Accessory? = null,
+    val legStyle: LegStyle? = null,
+)
+
+/** 1 体ぶんの見た目（設定と個別の着せ替えから決まる） */
+data class PetLook(val eyes: EyeStyle, val accessory: Accessory, val legStyle: LegStyle, val legColor: LegColor)
+
+/** 「バラバラ」の時はアプリごとに決まった物を選ぶ（毎回変わらないように） */
+private fun <T : Enum<T>> pick(global: T, own: T?, mixed: T, all: List<T>, key: String, salt: Int): T {
+    val v = own?.takeIf { it != mixed } ?: global
+    if (v != mixed) return v
+    val pool = all.filter { it != mixed }
+    return pool[Math.floorMod(key.hashCode() * 31 + salt, pool.size)]
+}
+
+fun PetConfig.lookFor(e: PetEntry?, key: String): PetLook = PetLook(
+    eyes = pick(eyes, e?.eyes, EyeStyle.MIXED, EyeStyle.entries, key, 1),
+    accessory = pick(accessory, e?.accessory, Accessory.MIXED, Accessory.entries, key, 7),
+    legStyle = pick(legStyle, e?.legStyle, LegStyle.MIXED, LegStyle.entries, key, 13),
+    legColor = pick(legColor, null, LegColor.MIXED, LegColor.entries, key, 29),
 )
 
 /** 置いた家具。位置は画面に対する割合（0〜1） */

@@ -303,6 +303,29 @@ class BackupCompatTest {
     }
 
     @Test
+    fun petLooksResolveAndSurviveRoundTrip() {
+        val cfg = PetConfig(eyes = EyeStyle.MIXED, accessory = Accessory.MIXED, legStyle = LegStyle.MIXED, legColor = LegColor.MIXED)
+        val keys = (0 until 200).map { "pkg$it/.Main" }
+        val looks = keys.map { cfg.lookFor(null, it) }
+        // 「バラバラ」はそのまま使わず、必ず具体的な見た目になる
+        assertTrue(looks.none { it.eyes == EyeStyle.MIXED || it.accessory == Accessory.MIXED || it.legStyle == LegStyle.MIXED || it.legColor == LegColor.MIXED })
+        // いろいろな種類が出る / 同じアプリはいつも同じ
+        assertTrue(looks.map { it.eyes }.toSet().size >= 8)
+        assertEquals(looks, keys.map { cfg.lookFor(null, it) })
+        // 個別の着せ替えが優先
+        val own = PetEntry("a/.A", eyes = EyeStyle.HEART, accessory = Accessory.CROWN)
+        assertEquals(EyeStyle.HEART, cfg.lookFor(own, own.key).eyes)
+        assertEquals(Accessory.CROWN, PetConfig(accessory = Accessory.NONE).lookFor(own, own.key).accessory)
+        val d = BackupCodec.decode(BackupCodec.encode(LauncherData(pets = listOf(own), settings = LauncherSettings(pet = PetConfig(theme = PetTheme.MEADOW)))))
+        assertEquals(EyeStyle.HEART, d.pets[0].eyes)
+        assertEquals(null, d.pets[0].legStyle)
+        assertEquals(PetTheme.MEADOW, d.settings.pet.theme)
+        // 野原には野原の家具
+        assertTrue(FurnitureKind.TREE.availableIn(PetTheme.MEADOW) && !FurnitureKind.TREE.availableIn(PetTheme.CASUAL))
+        assertTrue(FurnitureKind.CASTLE.availableIn(PetTheme.AQUARIUM) && !FurnitureKind.CASTLE.availableIn(PetTheme.MEADOW))
+    }
+
+    @Test
     fun freeSpotAvoidsOverlap() {
         val ws = listOf(WidgetItem("a", x = 0, y = 0, w = 8, h = 2), WidgetItem("b", x = 0, y = 2, w = 4, h = 2))
         assertEquals(4 to 2, findFreeSpot(ws, 4, 2))

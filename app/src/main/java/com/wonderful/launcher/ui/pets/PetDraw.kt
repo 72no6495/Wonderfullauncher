@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.wonderful.launcher.data.FurnitureKind
+import com.wonderful.launcher.data.PetLook
 import com.wonderful.launcher.data.PetTheme
 import com.wonderful.launcher.ui.theme.RetroPalette
 import kotlin.math.PI
@@ -59,6 +60,10 @@ fun petColors(theme: PetTheme, p: RetroPalette): PetColors = when (theme) {
     PetTheme.VAPOR -> PetColors(
         leg = p.cyan, legGlow = p.pink, joint = Color.White, shadow = Color(0x55000000),
         nameBg = Color(0xCC1B0B33), nameText = p.cyan, accent = p.pink, accent2 = p.cyan,
+    )
+    PetTheme.MEADOW -> PetColors(
+        leg = Color(0xFF4E342E), legGlow = null, joint = Color(0xFF3E2723), shadow = Color(0x33203010),
+        nameBg = Color(0xE6FFFFFF), nameText = Color(0xFF33691E), accent = Color(0xFFFF7043), accent2 = Color(0xFF29B6F6),
     )
     PetTheme.AQUARIUM -> PetColors(
         leg = Color.White, legGlow = null, joint = Color.White, shadow = Color(0x33001A2A),
@@ -104,7 +109,7 @@ fun iconTint(img: ImageBitmap?): Color {
     }.getOrDefault(Color(0xFFFFB74D))
 }
 
-private fun DrawScope.image(img: ImageBitmap, cx: Float, cy: Float, w: Float, h: Float, alpha: Float = 1f) {
+internal fun DrawScope.image(img: ImageBitmap, cx: Float, cy: Float, w: Float, h: Float, alpha: Float = 1f) {
     if (w < 1f || h < 1f) return
     drawImage(
         img,
@@ -169,6 +174,7 @@ fun DrawScope.drawPetBackground(theme: PetTheme, p: RetroPalette, sim: PetSim, t
             var sy = 0f
             while (sy < h) { drawLine(Color.Black.copy(alpha = 0.12f), Offset(0f, sy), Offset(w, sy), 1f); sy += unit * 4f }
         }
+        PetTheme.MEADOW -> drawMeadow(t, unit)
         PetTheme.AQUARIUM -> {
             val floor = sim.floorY
             drawRect(Brush.verticalGradient(listOf(Color(0xFF1386A8), Color(0xFF0A4F70), Color(0xFF032A40)), 0f, floor))
@@ -231,6 +237,96 @@ fun DrawScope.drawPetBackground(theme: PetTheme, p: RetroPalette, sim: PetSim, t
 }
 
 // ─────────────────────────────────────────────
+// 野原
+// ─────────────────────────────────────────────
+
+private fun frac(x: Float): Float = x - kotlin.math.floor(x)
+
+private fun DrawScope.drawMeadow(t: Float, unit: Float) {
+    val w = size.width
+    val h = size.height
+    drawRect(Brush.verticalGradient(listOf(Color(0xFFA5D66B), Color(0xFF86C251), Color(0xFF74B243))))
+    // 芝刈りのしま模様
+    val band = unit * 70f
+    rotate(-20f, Offset(w / 2, h / 2)) {
+        var x = -w
+        var i = 0
+        while (x < w * 2) {
+            if (i % 2 == 0) drawRect(Color.White.copy(alpha = 0.05f), Offset(x, -h), Size(band, h * 3))
+            x += band; i++
+        }
+    }
+    // 土の小道
+    val path = Path().apply {
+        moveTo(-unit * 20f, h * 0.78f)
+        cubicTo(w * 0.25f, h * 0.55f, w * 0.5f, h * 1.0f, w * 0.75f, h * 0.7f)
+        cubicTo(w * 0.88f, h * 0.55f, w * 0.95f, h * 0.45f, w + unit * 20f, h * 0.42f)
+    }
+    drawPath(path, Color(0xFFD7B98E), style = Stroke(unit * 46f, cap = StrokeCap.Round))
+    drawPath(path, Color(0xFFE6CFA6), style = Stroke(unit * 34f, cap = StrokeCap.Round))
+    // 草の束（風になびく）
+    val wind = sin(t * 0.9f) * 0.5f + 0.5f
+    for (i in 0 until 90) {
+        val gx = frac(i * 0.618034f + 0.11f) * w
+        val gy = frac(i * 0.381966f + 0.37f) * h
+        val sway = (sin(t * 2.2f + gx * 0.01f) * 0.6f + wind) * unit * 3.5f
+        val gh = unit * (7f + (i % 4) * 2f)
+        val col = if (i % 3 == 0) Color(0xFF558B2F) else Color(0xFF689F38)
+        for (k in -1..1) {
+            drawLine(col, Offset(gx + k * unit * 2.5f, gy), Offset(gx + k * unit * 4f + sway, gy - gh * (1f - abs(k) * 0.25f)), unit * 1.6f, StrokeCap.Round)
+        }
+    }
+    // 小さな花
+    val petals = listOf(Color.White, Color(0xFFFFF176), Color(0xFFF8BBD0), Color(0xFFB39DDB))
+    for (i in 0 until 34) {
+        val fx = frac(i * 0.754877f + 0.2f) * w
+        val fy = frac(i * 0.569840f + 0.6f) * h
+        val pr = unit * (2.2f + (i % 3) * 0.6f)
+        val nod = sin(t * 1.5f + i) * unit * 1.2f
+        val col = petals[i % petals.size]
+        for (k in 0 until 5) {
+            val a = k * 1.2566f
+            drawCircle(col, pr, Offset(fx + nod + cos(a) * pr * 1.2f, fy + sin(a) * pr * 1.2f))
+        }
+        drawCircle(Color(0xFFFFB300), pr * 0.8f, Offset(fx + nod, fy))
+    }
+    // ゆっくり流れる雲の影
+    for (k in 0 until 3) {
+        val cx = frac(t * 0.012f + k * 0.37f) * (w + unit * 600f) - unit * 300f
+        val cy = h * (0.2f + k * 0.3f)
+        drawOval(Color(0x14000000), Offset(cx - unit * 160f, cy - unit * 60f), Size(unit * 320f, unit * 120f))
+        drawOval(Color(0x10000000), Offset(cx - unit * 60f, cy - unit * 90f), Size(unit * 220f, unit * 110f))
+    }
+    // 日だまり
+    drawCircle(Brush.radialGradient(listOf(Color(0x33FFF9C4), Color.Transparent), Offset(w * 0.15f, h * 0.1f), h * 0.8f), h * 0.8f, Offset(w * 0.15f, h * 0.1f))
+}
+
+/** 野原を飛ぶチョウ（飼っている子の手前に描く） */
+fun DrawScope.drawMeadowOverlay(t: Float, unit: Float) {
+    val w = size.width
+    val h = size.height
+    val wings = listOf(Color(0xFFFFEB3B), Color(0xFFFFFFFF), Color(0xFF81D4FA), Color(0xFFFF8A65), Color(0xFFCE93D8))
+    for (i in 0 until 5) {
+        val sp = 0.05f + i * 0.013f
+        val x = w * (0.5f + 0.42f * sin(t * sp * 2.1f + i * 1.7f) + 0.06f * sin(t * 0.9f + i))
+        val y = h * (0.45f + 0.35f * sin(t * sp * 3.3f + i * 2.3f) + 0.05f * sin(t * 1.7f + i * 3f))
+        val flap = abs(sin(t * 14f + i * 1.3f))
+        val s = unit * 7f
+        val dx = cos(t * sp * 2.1f + i * 1.7f)
+        rotate(if (dx > 0f) 15f else -15f, Offset(x, y)) {
+            for (side in intArrayOf(-1, 1)) {
+                val wx = side * s * (0.3f + 0.9f * flap)
+                drawOval(wings[i], Offset(x + (if (side < 0) wx else 0f), y - s), Size(abs(wx), s * 1.1f))
+                drawOval(wings[i].copy(alpha = 0.85f), Offset(x + (if (side < 0) wx * 0.8f else 0f), y), Size(abs(wx) * 0.8f, s * 0.8f))
+            }
+            drawLine(Color(0xFF3E2723), Offset(x, y - s * 0.9f), Offset(x, y + s * 0.8f), unit * 1.5f, StrokeCap.Round)
+        }
+        // 影
+        drawOval(Color(0x18000000), Offset(x - s * 0.6f, y + unit * 24f), Size(s * 1.2f, s * 0.4f))
+    }
+}
+
+// ─────────────────────────────────────────────
 // 家具
 // ─────────────────────────────────────────────
 
@@ -243,11 +339,23 @@ fun DrawScope.drawFurniture(f: FurnitureBody, sim: PetSim, theme: PetTheme, colo
     }
     when (theme) {
         PetTheme.VAPOR -> drawCircle(Brush.radialGradient(listOf(p.cyan.copy(alpha = 0.35f), Color.Transparent), c, r * 1.4f), r * 1.4f, c)
-        PetTheme.CASUAL -> if (f.kind != FurnitureKind.RUG) drawOval(colors.shadow, Offset(f.x - r * 0.9f, f.y + r * 0.45f), Size(r * 1.8f, r * 0.55f))
+        PetTheme.CASUAL, PetTheme.MEADOW -> if (f.kind != FurnitureKind.RUG) drawOval(colors.shadow, Offset(f.x - r * 0.9f, f.y + r * 0.45f), Size(r * 1.8f, r * 0.55f))
         PetTheme.AQUARIUM -> drawOval(Color(0x33002233), Offset(f.x - r * 0.9f, f.y + r * 0.5f), Size(r * 1.8f, r * 0.4f))
     }
     when (f.kind) {
-        FurnitureKind.RUG -> {
+        FurnitureKind.RUG -> if (theme == PetTheme.MEADOW) {
+            // ピクニックシート（赤白チェック）
+            val w = r * 2.6f
+            val h = r * 1.9f
+            val tl = Offset(f.x - w / 2, f.y - h / 2)
+            drawRect(Color.White, tl, Size(w, h))
+            val n = 6
+            for (i in 0 until n) {
+                drawRect(Color(0x88E53935), Offset(tl.x + i * w / n, tl.y), Size(w / n / 2, h))
+                drawRect(Color(0x88E53935), Offset(tl.x, tl.y + i * h / n), Size(w, h / n / 2))
+            }
+            drawRect(Color(0xFFC62828), tl, Size(w, h), style = Stroke(unit * 2f))
+        } else {
             val w = r * 2.6f
             val h = r * 1.7f
             val base = if (theme == PetTheme.VAPOR) p.purple else Color(0xFFFFCDD2)
@@ -281,7 +389,7 @@ fun DrawScope.drawFurniture(f: FurnitureBody, sim: PetSim, theme: PetTheme, colo
             rotate(f.spin * 57.3f, c) { image(img, f.x, f.y, r * 2.2f, r * 2.2f) }
         }
         else -> {
-            val s = r * 2.3f
+            val s = r * (if (f.kind == FurnitureKind.TREE) 3.2f else 2.3f)
             val bob = if (theme == PetTheme.AQUARIUM && f.kind == FurnitureKind.CHEST) sin(t * 2f) * unit else 0f
             image(emoji.get(f.kind.emoji, s.toInt()), f.x, f.y + bob, s, s)
             if (f.kind == FurnitureKind.TV) {
@@ -328,7 +436,7 @@ fun DrawScope.drawFood(f: Food, sim: PetSim, unit: Float) {
 // クモ足のアプリ
 // ─────────────────────────────────────────────
 
-fun DrawScope.drawSpider(p: Pet, sim: PetSim, icon: ImageBitmap?, colors: PetColors, theme: PetTheme, t: Float, unit: Float) {
+fun DrawScope.drawSpider(p: Pet, sim: PetSim, icon: ImageBitmap?, tint: Color, look: PetLook, colors: PetColors, theme: PetTheme, t: Float, unit: Float) {
     val r = sim.radius
     val lift = p.lift * r * 0.8f
     val walking = p.speed > r * 0.2f
@@ -339,31 +447,16 @@ fun DrawScope.drawSpider(p: Pet, sim: PetSim, icon: ImageBitmap?, colors: PetCol
 
     translate(0f, -lift) {
         // 足（体より先に描く）
-        val thigh = r * 0.15f
-        val shin = r * 0.1f
-        p.legs.forEach { l ->
+        p.legs.forEachIndexed { i, l ->
             val (hx, hy) = sim.hip(p, l)
             val (kx, ky) = sim.knee(p, l)
-            val hip = Offset(hx, hy)
-            val knee = Offset(kx, ky - l.lift * r * 0.25f)
-            val foot = Offset(l.footX, l.footY)
-            colors.legGlow?.let { g ->
-                drawLine(g.copy(alpha = 0.35f), hip, knee, thigh * 2.2f, StrokeCap.Round)
-                drawLine(g.copy(alpha = 0.35f), knee, foot, shin * 2.2f, StrokeCap.Round)
-            }
-            drawLine(colors.leg, hip, knee, thigh, StrokeCap.Round)
-            drawLine(colors.leg, knee, foot, shin, StrokeCap.Round)
-            // 毛（カジュアルだけ、ちょっとだけ）
-            if (theme == PetTheme.CASUAL) {
-                val mx = (hip.x + knee.x) / 2
-                val my = (hip.y + knee.y) / 2
-                drawLine(colors.leg, Offset(mx, my), Offset(mx + (knee.y - hip.y) * 0.12f, my - (knee.x - hip.x) * 0.12f), unit * 1.2f, StrokeCap.Round)
-            }
-            drawCircle(colors.joint, thigh * 0.55f, knee)
-            drawCircle(colors.joint, shin * 0.6f, foot)
+            drawLeg(
+                look.legStyle, Offset(hx, hy), Offset(kx, ky - l.lift * r * 0.25f), Offset(l.footX, l.footY), r,
+                legColor(look, colors.leg, tint, i, t), colors.legGlow, unit,
+            )
         }
 
-        // 体（アプリのアイコン）
+        // 体（アプリのアイコン）＋目＋飾り
         val joy = p.joy
         val sx = 1f + 0.12f * joy * sin(t * 22f)
         val sleeping = p.mood == Mood.SLEEP
@@ -376,31 +469,7 @@ fun DrawScope.drawSpider(p: Pet, sim: PetSim, icon: ImageBitmap?, colors: PetCol
             scale(sx, sy, Offset(p.x, cy + size / 2))
         }) {
             if (theme == PetTheme.VAPOR) drawRoundRect(colors.accent.copy(alpha = 0.5f), Offset(p.x - size * 0.56f, cy - size * 0.56f), Size(size * 1.12f, size * 1.12f), CornerRadius(size * 0.3f), style = Stroke(unit * 3f))
-            if (icon != null) image(icon, p.x, cy, size, size, alpha = if (sleeping) 0.85f else 1f)
-            else drawRoundRect(colors.accent, Offset(p.x - size / 2, cy - size / 2), Size(size, size), CornerRadius(size * 0.25f))
-            // ほっぺ
-            if (joy > 0.05f) {
-                drawCircle(Color(0xFFFF8A80).copy(alpha = 0.6f * joy), r * 0.18f, Offset(p.x - r * 0.62f, cy + r * 0.25f))
-                drawCircle(Color(0xFFFF8A80).copy(alpha = 0.6f * joy), r * 0.18f, Offset(p.x + r * 0.62f, cy + r * 0.25f))
-            }
-            // 目（アイコンの上からのぞく）
-            val eyeY = cy - size * 0.43f
-            val look = Offset(cos(p.heading), sin(p.heading)) * (r * 0.07f)
-            for (side in intArrayOf(-1, 1)) {
-                val ec = Offset(p.x + side * r * 0.3f, eyeY)
-                val er = r * 0.22f
-                if (sleeping) {
-                    drawArc(colors.joint, 10f, 160f, false, Offset(ec.x - er, ec.y - er * 0.6f), Size(er * 2, er * 1.2f), style = Stroke(unit * 2f, cap = StrokeCap.Round))
-                } else {
-                    val open = (1f - p.blink).coerceIn(0.08f, 1f)
-                    drawOval(Color.White, Offset(ec.x - er, ec.y - er * open), Size(er * 2, er * 2 * open))
-                    drawOval(colors.joint, Offset(ec.x - er, ec.y - er * open), Size(er * 2, er * 2 * open), style = Stroke(unit * 1.5f))
-                    if (open > 0.3f) {
-                        drawCircle(Color(0xFF212121), er * 0.5f, ec + look)
-                        drawCircle(Color.White, er * 0.17f, ec + look + Offset(-er * 0.15f, -er * 0.15f))
-                    }
-                }
-            }
+            drawCritterHead(p.x, cy, size, icon, colors.accent, look, p.blink, sleeping, joy, Offset(cos(p.heading), sin(p.heading)), t, unit, p.seed)
         }
     }
 }
@@ -409,18 +478,25 @@ fun DrawScope.drawSpider(p: Pet, sim: PetSim, icon: ImageBitmap?, colors: PetCol
 // 魚になったアプリ
 // ─────────────────────────────────────────────
 
-fun DrawScope.drawFish(p: Pet, sim: PetSim, icon: ImageBitmap?, fin: Color, t: Float, unit: Float) {
+fun DrawScope.drawFish(p: Pet, sim: PetSim, icon: ImageBitmap?, fin: Color, look: PetLook, t: Float, unit: Float) {
     val r = sim.radius
     val dir = if (p.face >= 0f) 1f else -1f
     val width = abs(p.face).coerceIn(0.2f, 1f)
     val joy = p.joy
     val cy = p.y + sin(p.tail * 0.7f) * r * 0.05f
     val wag = sin(p.tail * 7f) * (0.25f + 0.25f * (p.speed / (r * 2f)).coerceIn(0f, 1f) + joy * 0.4f)
-    val finDark = lerp(fin, Color.Black, 0.3f)
+    val finCol = if (look.legColor == com.wonderful.launcher.data.LegColor.RAINBOW) Color.hsv((t * 50f + p.seed % 360 + 360f) % 360f, 0.6f, 1f) else fin
+    val finDark = lerp(finCol, Color.Black, 0.3f)
+    // ヒレの形も足の見た目に合わせて少し変える
+    val finScale = when (look.legStyle) {
+        com.wonderful.launcher.data.LegStyle.STUBBY -> 0.75f
+        com.wonderful.launcher.data.LegStyle.HAIRY -> 1.25f
+        else -> 1f
+    }
 
     // 尾びれ
     val tailBase = Offset(p.x - dir * r * 0.8f * width, cy)
-    val tailLen = r * 0.9f
+    val tailLen = r * 0.9f * finScale
     val a = wag
     val tipUp = Offset(tailBase.x - dir * tailLen * cos(a - 0.5f), cy - tailLen * sin(0.6f + a * dir * 0.5f))
     val tipDown = Offset(tailBase.x - dir * tailLen * cos(a + 0.5f), cy + tailLen * sin(0.6f - a * dir * 0.5f))
@@ -431,22 +507,33 @@ fun DrawScope.drawFish(p: Pet, sim: PetSim, icon: ImageBitmap?, fin: Color, t: F
         quadraticTo(tailBase.x - dir * tailLen * 0.5f, cy + r * 0.2f, tailBase.x, tailBase.y)
         close()
     }
-    drawPath(tail, fin.copy(alpha = 0.9f))
+    drawPath(tail, finCol.copy(alpha = 0.9f))
+    if (look.legStyle == com.wonderful.launcher.data.LegStyle.CANDY) {
+        drawPath(tail, Color.White.copy(alpha = 0.7f), style = Stroke(unit * 3f, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(unit * 4f, unit * 4f))))
+    }
     drawPath(tail, finDark, style = Stroke(unit * 1.5f))
 
-    // 背びれ
+    // 背びれ（メカはギザギザ）
     val dorsal = Path().apply {
         moveTo(p.x - dir * r * 0.45f * width, cy - r * 0.78f)
-        quadraticTo(p.x - dir * r * 0.1f * width, cy - r * (1.35f + 0.08f * sin(p.tail * 5f)), p.x + dir * r * 0.4f * width, cy - r * 0.8f)
+        if (look.legStyle == com.wonderful.launcher.data.LegStyle.ROBOT) {
+            for (k in 1..4) {
+                val fx = p.x - dir * r * (0.45f - k * 0.22f) * width
+                lineTo(fx - dir * r * 0.11f * width, cy - r * (1.15f + 0.05f * k))
+                lineTo(fx, cy - r * 0.8f)
+            }
+        } else {
+            quadraticTo(p.x - dir * r * 0.1f * width, cy - r * (1.35f + 0.08f * sin(p.tail * 5f)) * finScale.coerceAtMost(1.1f), p.x + dir * r * 0.4f * width, cy - r * 0.8f)
+        }
         close()
     }
-    drawPath(dorsal, fin.copy(alpha = 0.85f))
+    drawPath(dorsal, (if (look.legStyle == com.wonderful.launcher.data.LegStyle.ROBOT) Color(0xFF90A4AE) else finCol).copy(alpha = 0.85f))
     drawPath(dorsal, finDark, style = Stroke(unit * 1.2f))
 
     // 体
     val size = r * 1.75f
     if (icon != null) image(icon, p.x, cy, size * width, size)
-    else drawRoundRect(fin, Offset(p.x - size * width / 2, cy - size / 2), Size(size * width, size), CornerRadius(size * 0.3f))
+    else drawRoundRect(finCol, Offset(p.x - size * width / 2, cy - size / 2), Size(size * width, size), CornerRadius(size * 0.3f))
     // うろこっぽい光
     drawRoundRect(
         Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.25f), Color.Transparent), cy - size / 2, cy),
@@ -458,23 +545,21 @@ fun DrawScope.drawFish(p: Pet, sim: PetSim, icon: ImageBitmap?, fin: Color, t: F
         val bx = p.x + dir * r * 0.1f * width
         val by = cy + r * 0.55f
         moveTo(bx, by)
-        quadraticTo(bx - dir * r * 0.25f, by + r * (0.45f + 0.15f * sin(p.tail * 9f)), bx - dir * r * 0.55f, by + r * 0.15f)
+        quadraticTo(bx - dir * r * 0.25f, by + r * (0.45f + 0.15f * sin(p.tail * 9f)) * finScale, bx - dir * r * 0.55f, by + r * 0.15f)
         close()
     }
-    drawPath(pec, fin.copy(alpha = 0.8f))
+    drawPath(pec, finCol.copy(alpha = 0.8f))
 
-    // 目
+    // 頭の飾り
+    if (width > 0.5f) {
+        drawAccessory(look.accessory, p.x + dir * r * 0.1f, cy, size * width.coerceAtLeast(0.7f), t, unit, p.seed, behind = true)
+        drawAccessory(look.accessory, p.x + dir * r * 0.1f, cy, size * width.coerceAtLeast(0.7f), t, unit, p.seed, behind = false)
+    }
+
+    // 目（横から見ているので 1 つ）
     if (width > 0.5f) {
         val ec = Offset(p.x + dir * r * 0.55f * width, cy - r * 0.38f)
-        val er = r * 0.2f
-        if (p.mood == Mood.SLEEP) {
-            drawLine(Color(0xFF212121), Offset(ec.x - er * 0.8f, ec.y), Offset(ec.x + er * 0.8f, ec.y), unit * 2f, StrokeCap.Round)
-        } else {
-            val open = (1f - p.blink).coerceIn(0.1f, 1f)
-            drawOval(Color.White, Offset(ec.x - er, ec.y - er * open), Size(er * 2, er * 2 * open))
-            drawCircle(Color(0xFF212121), er * 0.55f, Offset(ec.x + dir * er * 0.25f, ec.y))
-            drawCircle(Color.White, er * 0.18f, Offset(ec.x + dir * er * 0.1f, ec.y - er * 0.2f))
-        }
+        drawEye(look.eyes, ec, r * 0.2f, dir.toInt(), Offset(dir, 0f), p.blink, p.mood == Mood.SLEEP, joy, t, unit)
         if (joy > 0.05f) drawCircle(Color(0xFFFF8A80).copy(alpha = 0.5f * joy), r * 0.16f, Offset(ec.x - dir * r * 0.1f, cy + r * 0.1f))
     }
 }

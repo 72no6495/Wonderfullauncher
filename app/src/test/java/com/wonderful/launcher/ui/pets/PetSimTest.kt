@@ -14,8 +14,8 @@ class PetSimTest {
         setAquarium(aquarium)
         syncPets((0 until 10).map { Triple("app$it", if (it % 2 == 0) 0.2f else 0.9f, 0.5f) })
         syncFurniture(
-            listOf(FurnitureKind.BED, FurnitureKind.BALL, FurnitureKind.TV, FurnitureKind.BOWL, FurnitureKind.SOFA, FurnitureKind.CASTLE, FurnitureKind.CHEST)
-                .mapIndexed { i, k -> Triple("f$i", k, (0.1f + i * 0.12f) to 0.5f) },
+            listOf(FurnitureKind.BED, FurnitureKind.BALL, FurnitureKind.TV, FurnitureKind.BOWL, FurnitureKind.SOFA, FurnitureKind.CASTLE, FurnitureKind.CHEST, FurnitureKind.TREE, FurnitureKind.TENT, FurnitureKind.STUMP, FurnitureKind.ROCK)
+                .mapIndexed { i, k -> Triple("f$i", k, (0.05f + i * 0.08f) to 0.5f) },
         )
     }
 

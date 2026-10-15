@@ -224,6 +224,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         return ok
     }
 
+    /** 1 体ずつの着せ替え */
+    fun setPetLook(key: String, f: (PetEntry) -> PetEntry) = store.update { d ->
+        d.copy(pets = d.pets.map { if (it.key == key) f(it) else it })
+    }
+
     /** おまかせ：球体のアプリから選ぶ */
     fun autoPickPets(count: Int = 6) {
         store.update { d ->

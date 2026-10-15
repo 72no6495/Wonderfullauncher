@@ -37,6 +37,8 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -84,7 +86,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.wonderful.launcher.data.Accessory
 import com.wonderful.launcher.data.AppInfo
+import com.wonderful.launcher.data.EyeStyle
+import com.wonderful.launcher.data.LegColor
+import com.wonderful.launcher.data.LegStyle
+import com.wonderful.launcher.data.availableIn
+import com.wonderful.launcher.data.lookFor
 import com.wonderful.launcher.data.FurnitureKind
 import com.wonderful.launcher.data.LauncherData
 import com.wonderful.launcher.data.LauncherSettings
@@ -98,6 +106,7 @@ import com.wonderful.launcher.ui.settings.ChoiceSetting
 import com.wonderful.launcher.ui.settings.SliderSetting
 import com.wonderful.launcher.ui.settings.SwitchSetting
 import com.wonderful.launcher.ui.components.RetroButton
+import com.wonderful.launcher.ui.components.RetroChip
 import com.wonderful.launcher.ui.components.RetroLabel
 import com.wonderful.launcher.ui.components.SectionHeader
 import com.wonderful.launcher.ui.theme.FrameGate
@@ -128,6 +137,11 @@ fun petUiPalette(theme: PetTheme, base: RetroPalette): RetroPalette = when (them
         yellow = Color(0xFFFFB300), mint = Color(0xFF43A047), panel = Color(0xFFFFFBF5), text = Color(0xFF5D4037),
         titleStart = Color(0xFFFF8A80), titleEnd = Color(0xFFFFB74D),
     )
+    PetTheme.MEADOW -> base.copy(
+        pink = Color(0xFFFF7043), cyan = Color(0xFF43A047), purple = Color(0xFF8D6E63),
+        yellow = Color(0xFFF9A825), mint = Color(0xFF2E7D32), panel = Color(0xFFF9FFF0), text = Color(0xFF33691E),
+        titleStart = Color(0xFF7CB342), titleEnd = Color(0xFFFFCA28),
+    )
     PetTheme.AQUARIUM -> base.copy(
         pink = Color(0xFFFF8A65), cyan = Color(0xFF4DD0E1), purple = Color(0xFF4FC3F7),
         yellow = Color(0xFFFFF59D), mint = Color(0xFF80CBC4), panel = Color(0xFF06324A), text = Color(0xFFE0F7FA),
@@ -136,7 +150,11 @@ fun petUiPalette(theme: PetTheme, base: RetroPalette): RetroPalette = when (them
 }
 
 /** テーマの家具の部屋（カジュアルとヴェイパーは同じ部屋、アクアリウムは別） */
-fun roomOf(theme: PetTheme): PetTheme = if (theme == PetTheme.AQUARIUM) PetTheme.AQUARIUM else PetTheme.CASUAL
+fun roomOf(theme: PetTheme): PetTheme = when (theme) {
+    PetTheme.AQUARIUM -> PetTheme.AQUARIUM
+    PetTheme.MEADOW -> PetTheme.MEADOW
+    PetTheme.CASUAL, PetTheme.VAPOR -> PetTheme.CASUAL
+}
 
 @Composable
 fun PetScreen(vm: LauncherViewModel) {
@@ -180,6 +198,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
     val appMap = remember(apps) { apps.associateBy { it.key } }
     val pets = data.pets.filter { appMap.containsKey(it.key) }
     val roomFurniture = data.furniture.filter { it.room == room }
+    val looks = remember(data.pets, cfg) { data.pets.associate { it.key to cfg.lookFor(it, it.key) } }
 
     fun haptic(kind: Int = HapticFeedbackConstants.CLOCK_TICK) {
         if (cfg.haptic) view.performHapticFeedback(kind)
@@ -397,7 +416,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                 sim.pets.forEach { p ->
                     val icon = icons[p.key]
                     val fin = tints.getOrPut(p.key) { iconTint(icon) }
-                    drawFish(p, sim, icon, fin, t, unit)
+                    drawFish(p, sim, icon, fin, looks[p.key] ?: cfg.lookFor(null, p.key), t, unit)
                 }
             } else {
                 // ラグは床に敷くので先に。他は奥（上）から順に描く
@@ -405,9 +424,14 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                 val items = ArrayList<Pair<Float, () -> Unit>>()
                 sim.furniture.filter { it.kind != FurnitureKind.RUG }.forEach { f -> items += f.y to { drawFurniture(f, sim, theme, colors, base, emoji, t, unit, false) } }
                 sim.food.forEach { f -> items += f.y to { drawFood(f, sim, unit) } }
-                sim.pets.forEach { p -> items += (p.y + p.lift * sim.radius * 3f) to { drawSpider(p, sim, icons[p.key], colors, theme, t, unit) } }
+                sim.pets.forEach { p ->
+                    val icon = icons[p.key]
+                    val tint = tints.getOrPut(p.key) { iconTint(icon) }
+                    items += (p.y + p.lift * sim.radius * 3f) to { drawSpider(p, sim, icon, tint, looks[p.key] ?: cfg.lookFor(null, p.key), colors, theme, t, unit) }
+                }
                 items.sortBy { it.first }
                 items.forEach { it.second() }
+                if (theme == PetTheme.MEADOW) drawMeadowOverlay(t, unit)
             }
             if (showFurnitureSel) {
                 sim.furniture.forEach { f ->
@@ -453,7 +477,11 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
         ) {
             Pill(theme) {
                 RetroLabel(
-                    (if (theme == PetTheme.AQUARIUM) "🐠 アプリ水族館" else "🕷 アプリ飼育") + "  ${pets.size}/$MAX_PETS",
+                    when (theme) {
+                        PetTheme.AQUARIUM -> "🐠 アプリ水族館"
+                        PetTheme.MEADOW -> "🌼 アプリ牧場"
+                        else -> "🕷 アプリ飼育"
+                    } + "  ${pets.size}/$MAX_PETS",
                     size = 13.sp, weight = FontWeight.Bold, color = ui.text,
                 )
             }
@@ -480,7 +508,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                 ) {
                     RetroLabel("${roomFurniture.size}/$MAX_FURNITURE", size = 12.sp, color = ui.yellow, modifier = Modifier.padding(horizontal = 6.dp))
                     FurnitureKind.entries
-                        .filter { if (room == PetTheme.AQUARIUM) it.aquarium || it == FurnitureKind.BALL else !it.aquarium }
+                        .filter { it.availableIn(room) }
                         .forEach { k ->
                             val sel = placeKind == k
                             Column(
@@ -504,7 +532,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
         if (pets.isEmpty() && sheet == Sheet.NONE) {
             Card(theme, Modifier.align(Alignment.Center).widthIn(max = 420.dp)) {
                 Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    RetroLabel(if (theme == PetTheme.AQUARIUM) "🐠" else "🕷", size = 40.sp)
+                    RetroLabel(if (theme == PetTheme.AQUARIUM) "🐠" else if (theme == PetTheme.MEADOW) "🌼" else "🕷", size = 40.sp)
                     Spacer(Modifier.height(6.dp))
                     RetroLabel("まだアプリを飼っていません", size = 17.sp, weight = FontWeight.Bold, color = ui.text)
                     RetroLabel("好きなアプリを最大 $MAX_PETS 体まで放し飼いにできます", size = 12.sp, color = ui.text.copy(alpha = 0.7f))
@@ -567,8 +595,17 @@ private fun ColumnScope.RosterSheet(vm: LauncherViewModel, data: LauncherData, a
     val ui = LocalPalette.current
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
+    var tab by remember { mutableIntStateOf(0) }
     val chosen = data.pets.map { it.key }.toSet()
-    SheetHeader("仲間を選ぶ  ${chosen.size}/$MAX_PETS", onClose)
+    SheetHeader(if (tab == 0) "仲間を選ぶ  ${chosen.size}/$MAX_PETS" else "着せ替え", onClose)
+    Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        RetroChip("🐾 仲間を選ぶ", tab == 0, { tab = 0 })
+        RetroChip("👒 着せ替え", tab == 1, { tab = 1 })
+    }
+    if (tab == 1) {
+        DressUp(vm, data, apps, icons)
+        return
+    }
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -631,6 +668,73 @@ private fun ColumnScope.RosterSheet(vm: LauncherViewModel, data: LauncherData, a
 }
 
 // ─────────────────────────────────────────────
+// 着せ替え（1 体ずつ）
+// ─────────────────────────────────────────────
+
+@Composable
+private fun ColumnScope.DressUp(vm: LauncherViewModel, data: LauncherData, apps: List<AppInfo>, icons: Map<String, ImageBitmap>) {
+    val ui = LocalPalette.current
+    val cfg = data.settings.pet
+    val unit = LocalDensity.current.density
+    if (data.pets.isEmpty()) {
+        RetroLabel("まだ誰もいません。「仲間を選ぶ」から選んでください", size = 13.sp, color = ui.text, modifier = Modifier.padding(20.dp), maxLines = 2)
+        return
+    }
+    val colors = petColors(cfg.theme, ui)
+    LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
+        items(data.pets, key = { it.key }) { e ->
+            val app = apps.firstOrNull { it.key == e.key }
+            val look = cfg.lookFor(e, e.key)
+            val icon = icons[e.key]
+            val tint = remember(icon) { iconTint(icon) }
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Canvas(Modifier.size(96.dp)) {
+                    val hs = size.width * 0.42f
+                    val cx = size.width / 2
+                    val cy = size.height * 0.58f
+                    val r = hs / 1.9f
+                    if (cfg.theme != PetTheme.AQUARIUM) for (i in 0 until 4) for (side in intArrayOf(-1, 1)) {
+                        val k = i - 1.5f
+                        drawLeg(
+                            look.legStyle,
+                            Offset(cx + side * hs * 0.3f, cy + k * hs * 0.15f),
+                            Offset(cx + side * hs * 0.66f, cy + k * hs * 0.22f - hs * 0.2f),
+                            Offset(cx + side * hs * 0.86f, cy + k * hs * 0.3f + hs * 0.25f),
+                            r, legColor(look, colors.leg, tint, i * 2 + side, 0f), colors.legGlow, unit,
+                        )
+                    }
+                    drawCritterHead(cx, cy, hs, icon, ui.pink, look, 0f, false, 0f, Offset(0.3f, 0.6f), 0f, unit, e.key.hashCode())
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    RetroLabel(app?.label ?: e.key, size = 15.sp, weight = FontWeight.Bold, color = ui.text)
+                    LookChips("目", listOf<EyeStyle?>(null) + EyeStyle.entries.filter { it != EyeStyle.MIXED }, e.eyes, { it?.label ?: "おまかせ" }) { v ->
+                        vm.setPetLook(e.key) { it.copy(eyes = v) }
+                    }
+                    LookChips("飾り", listOf<Accessory?>(null) + Accessory.entries.filter { it != Accessory.MIXED }, e.accessory, { it?.label ?: "おまかせ" }) { v ->
+                        vm.setPetLook(e.key) { it.copy(accessory = v) }
+                    }
+                    LookChips(if (cfg.theme == PetTheme.AQUARIUM) "ヒレ" else "足", listOf<LegStyle?>(null) + LegStyle.entries.filter { it != LegStyle.MIXED }, e.legStyle, { it?.label ?: "おまかせ" }) { v ->
+                        vm.setPetLook(e.key) { it.copy(legStyle = v) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> LookChips(title: String, options: List<T>, selected: T, label: (T) -> String, onSelect: (T) -> Unit) {
+    val ui = LocalPalette.current
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        RetroLabel(title, size = 11.sp, color = ui.text.copy(alpha = 0.7f), modifier = Modifier.width(30.dp))
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            options.forEach { o -> RetroChip(label(o), o == selected, { onSelect(o) }) }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
 // 設定（飼育モードの中と、通常の設定画面の両方で使う）
 // ─────────────────────────────────────────────
 
@@ -651,6 +755,11 @@ fun PetSettingsContent(s: LauncherSettings, vm: LauncherViewModel, inPetMode: Bo
     SliderSetting("動く速さ", cfg.speed, 0.3f..2.5f, format = { "%.1f倍".format(it) }) { v -> u { it.copy(speed = v) } }
     SliderSetting("大きさ", cfg.scale, 0.6f..1.8f, format = { "%.1f倍".format(it) }) { v -> u { it.copy(scale = v) } }
     ChoiceSetting("足の数", listOf(2, 3, 4, 5), cfg.legPairs, { "${it * 2}本" }, "部屋のテーマの時") { v -> u { it.copy(legPairs = v) } }
+    SectionHeader("見た目（みんな共通。1 体ずつ変えるには 🐾 仲間 →「着せ替え」）")
+    ChoiceSetting("目", EyeStyle.entries, cfg.eyes, { it.label }, "「バラバラ」はアプリごとに違う目になります") { v -> u { it.copy(eyes = v) } }
+    ChoiceSetting("頭の飾り", Accessory.entries, cfg.accessory, { it.label }) { v -> u { it.copy(accessory = v) } }
+    ChoiceSetting("足", LegStyle.entries, cfg.legStyle, { it.label }, "アクアリウムではヒレの形が変わります") { v -> u { it.copy(legStyle = v) } }
+    ChoiceSetting("足の色", LegColor.entries, cfg.legColor, { it.label }) { v -> u { it.copy(legColor = v) } }
     SwitchSetting("名前を表示", cfg.showNames) { v -> u { it.copy(showNames = v) } }
     SwitchSetting("振動", cfg.haptic, "なでた時・長押しした時") { v -> u { it.copy(haptic = v) } }
     SectionHeader("お世話")
@@ -673,7 +782,7 @@ fun PetSettingsContent(s: LauncherSettings, vm: LauncherViewModel, inPetMode: Bo
 // ─────────────────────────────────────────────
 
 private fun cardShape(theme: PetTheme): Shape = when (theme) {
-    PetTheme.CASUAL -> RoundedCornerShape(22.dp)
+    PetTheme.CASUAL, PetTheme.MEADOW -> RoundedCornerShape(22.dp)
     PetTheme.VAPOR -> RoundedCornerShape(6.dp)
     PetTheme.AQUARIUM -> RoundedCornerShape(18.dp)
 }
@@ -684,6 +793,7 @@ private fun Card(theme: PetTheme, modifier: Modifier = Modifier, content: @Compo
     val shape = cardShape(theme)
     val (bg, border, elevation) = when (theme) {
         PetTheme.CASUAL -> Triple(Color(0xFFFFFBF5), Color(0xFFFFCCBC), 8.dp)
+        PetTheme.MEADOW -> Triple(Color(0xFFF9FFF0), Color(0xFFC5E1A5), 8.dp)
         PetTheme.VAPOR -> Triple(ui.panel.copy(alpha = 0.94f), ui.pink, 0.dp)
         PetTheme.AQUARIUM -> Triple(Color(0xE606324A), Color(0x88B2EBF2), 0.dp)
     }
@@ -692,7 +802,7 @@ private fun Card(theme: PetTheme, modifier: Modifier = Modifier, content: @Compo
             .shadow(elevation, shape)
             .clip(shape)
             .background(bg)
-            .border(if (theme == PetTheme.CASUAL) 2.dp else 1.5.dp, border, shape),
+            .border(if (theme == PetTheme.CASUAL || theme == PetTheme.MEADOW) 2.dp else 1.5.dp, border, shape),
         content = content,
     )
 }
@@ -701,7 +811,7 @@ private fun Card(theme: PetTheme, modifier: Modifier = Modifier, content: @Compo
 private fun Pill(theme: PetTheme, alpha: Float = 1f, content: @Composable () -> Unit) {
     val ui = LocalPalette.current
     val bg = when (theme) {
-        PetTheme.CASUAL -> Color.White
+        PetTheme.CASUAL, PetTheme.MEADOW -> Color.White
         PetTheme.VAPOR -> ui.panel
         PetTheme.AQUARIUM -> Color(0xFF06324A)
     }
@@ -718,24 +828,26 @@ private fun Pill(theme: PetTheme, alpha: Float = 1f, content: @Composable () -> 
 private fun ToolButton(theme: PetTheme, emoji: String, label: String, selected: Boolean, size: Dp = 64.dp, onClick: () -> Unit) {
     val ui = LocalPalette.current
     val shape = when (theme) {
-        PetTheme.CASUAL -> RoundedCornerShape(20.dp)
+        PetTheme.CASUAL, PetTheme.MEADOW -> RoundedCornerShape(20.dp)
         PetTheme.VAPOR -> RoundedCornerShape(4.dp)
         PetTheme.AQUARIUM -> RoundedCornerShape(50)
     }
     val bg = when (theme) {
         PetTheme.CASUAL -> if (selected) Color(0xFFFFE0B2) else Color.White
+        PetTheme.MEADOW -> if (selected) Color(0xFFDCEDC8) else Color.White
         PetTheme.VAPOR -> if (selected) ui.pink.copy(alpha = 0.45f) else ui.panel.copy(alpha = 0.85f)
         PetTheme.AQUARIUM -> if (selected) Color(0xCC26C6DA) else Color(0x9906324A)
     }
     val border = if (selected) ui.pink else when (theme) {
         PetTheme.CASUAL -> Color(0xFFFFCCBC)
+        PetTheme.MEADOW -> Color(0xFFC5E1A5)
         PetTheme.VAPOR -> ui.cyan.copy(alpha = 0.6f)
         PetTheme.AQUARIUM -> Color(0x88B2EBF2)
     }
     Column(
         Modifier
             .size(size)
-            .shadow(if (theme == PetTheme.CASUAL) 4.dp else 0.dp, shape)
+            .shadow(if (theme == PetTheme.CASUAL || theme == PetTheme.MEADOW) 4.dp else 0.dp, shape)
             .clip(shape)
             .background(bg)
             .border(if (selected) 2.5.dp else 1.5.dp, border, shape)
