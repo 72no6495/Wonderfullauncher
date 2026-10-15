@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.wonderful.launcher.data.FurnitureKind
+import com.wonderful.launcher.data.EyeStyle
 import com.wonderful.launcher.data.PetLook
 import com.wonderful.launcher.data.PetTheme
 import com.wonderful.launcher.ui.theme.RetroPalette
@@ -438,12 +439,16 @@ fun DrawScope.drawFood(f: Food, sim: PetSim, unit: Float) {
 
 fun DrawScope.drawSpider(p: Pet, sim: PetSim, icon: ImageBitmap?, tint: Color, look: PetLook, colors: PetColors, theme: PetTheme, t: Float, unit: Float) {
     val r = sim.radius
-    val lift = p.lift * r * 0.8f
+    // 持ち上げ・ジャンプの高さ
+    val air = p.lift * 0.8f + p.hop * 0.55f
+    val lift = air * r
     val walking = p.speed > r * 0.2f
-    val bob = if (walking) sin(p.walkPhase * PI.toFloat() * 2f) * r * 0.05f else sin(t * 2.5f + p.seed) * r * 0.02f
+    val bob = if (walking) sin(p.walkPhase * PI.toFloat() * 2f) * r * 0.05f
+    else if (p.mood == Mood.SLEEP) sin(t * 1.3f + p.seed) * r * 0.03f
+    else sin(t * 2.5f + p.seed) * r * 0.02f
     // 影
-    val sh = 1f + p.lift * 0.3f
-    drawOval(colors.shadow.copy(alpha = colors.shadow.alpha * (1f - p.lift * 0.5f)), Offset(p.x - r * 1.05f * sh, p.y + r * 0.45f), Size(r * 2.1f * sh, r * 0.6f))
+    val sh = 1f + air * 0.3f
+    drawOval(colors.shadow.copy(alpha = colors.shadow.alpha * (1f - air * 0.5f).coerceAtLeast(0.2f)), Offset(p.x - r * 1.05f * sh, p.y + r * 0.45f), Size(r * 2.1f * sh, r * 0.6f))
 
     translate(0f, -lift) {
         // 足（体より先に描く）
@@ -458,18 +463,24 @@ fun DrawScope.drawSpider(p: Pet, sim: PetSim, icon: ImageBitmap?, tint: Color, l
 
         // 体（アプリのアイコン）＋目＋飾り
         val joy = p.joy
-        val sx = 1f + 0.12f * joy * sin(t * 22f)
         val sleeping = p.mood == Mood.SLEEP
-        val sy = (1f - 0.12f * joy * sin(t * 22f)) * (if (sleeping) 0.93f else 1f) * (1f + 0.02f * sin(t * 3f + p.seed))
-        val lean = (p.vx / (r * 3f)).coerceIn(-1f, 1f) * 10f
-        val cy = p.y + bob
+        // 伸び・うれしい揺れ・寝息
+        val sx = (1f + 0.12f * joy * sin(t * 22f)) * (1f - 0.08f * p.stretch) * (1f + 0.04f * p.tuck)
+        val sy = (1f - 0.12f * joy * sin(t * 22f)) * (1f + 0.2f * p.stretch) * (if (sleeping) 0.92f + 0.03f * sin(t * 1.3f + p.seed) else 1f + 0.02f * sin(t * 3f + p.seed))
+        val tilt = when (p.emote) {
+            Emote.CONFUSED -> 14f * sin(min(1f, p.emoteTime * 4f) * PI.toFloat() / 2f)
+            Emote.ANGRY -> sin(t * 40f) * 4f
+            else -> 0f
+        }
+        val lean = (p.vx / (r * 3f)).coerceIn(-1f, 1f) * 10f + tilt
+        val cy = p.y + bob + p.tuck * r * 0.12f
         val size = r * 1.9f
         withTransform({
             rotate(lean, Offset(p.x, cy + size / 2))
             scale(sx, sy, Offset(p.x, cy + size / 2))
         }) {
             if (theme == PetTheme.VAPOR) drawRoundRect(colors.accent.copy(alpha = 0.5f), Offset(p.x - size * 0.56f, cy - size * 0.56f), Size(size * 1.12f, size * 1.12f), CornerRadius(size * 0.3f), style = Stroke(unit * 3f))
-            drawCritterHead(p.x, cy, size, icon, colors.accent, look, p.blink, sleeping, joy, Offset(cos(p.heading), sin(p.heading)), t, unit, p.seed)
+            drawCritterHead(p.x, cy, size, icon, colors.accent, look, p.blink, sleeping, joy, Offset(p.gazeX, p.gazeY), t, unit, p.seed, p.emote)
         }
     }
 }
@@ -559,7 +570,10 @@ fun DrawScope.drawFish(p: Pet, sim: PetSim, icon: ImageBitmap?, fin: Color, look
     // 目（横から見ているので 1 つ）
     if (width > 0.5f) {
         val ec = Offset(p.x + dir * r * 0.55f * width, cy - r * 0.38f)
-        drawEye(look.eyes, ec, r * 0.2f, dir.toInt(), Offset(dir, 0f), p.blink, p.mood == Mood.SLEEP, joy, t, unit)
+        val eye = expressiveEyes(look.eyes, p.emote).let { if (it == EyeStyle.SMILE || it == EyeStyle.HEART || it == EyeStyle.SLEEPY) it else look.eyes }
+        drawEye(eye, ec, r * 0.2f * (if (p.emote == Emote.SURPRISED) 1.35f else 1f), dir.toInt(), Offset(dir * 0.8f, p.gazeY * 0.5f), p.blink, p.mood == Mood.SLEEP, joy, t, unit)
+        if (p.mood != Mood.SLEEP) drawExpression(p.emote, ec, r, p.x, cy, size, t, unit, pair = false)
+        else drawNoseBubble(Offset(p.x + dir * r * 0.95f, cy + r * 0.05f), r, t, unit, p.seed)
         if (joy > 0.05f) drawCircle(Color(0xFFFF8A80).copy(alpha = 0.5f * joy), r * 0.16f, Offset(ec.x - dir * r * 0.1f, cy + r * 0.1f))
     }
 }
@@ -575,7 +589,7 @@ private fun heartPath(c: Offset, s: Float): Path = Path().apply {
     close()
 }
 
-fun DrawScope.drawParticles(sim: PetSim, colors: PetColors, emoji: EmojiCache, unit: Float) {
+fun DrawScope.drawParticles(sim: PetSim, colors: PetColors, emoji: EmojiCache, unit: Float, paint: LabelPaint) {
     val r = sim.radius
     sim.particles.forEach { q ->
         val fade = 1f - q.t
@@ -602,6 +616,24 @@ fun DrawScope.drawParticles(sim: PetSim, colors: PetColors, emoji: EmojiCache, u
             }
             FxKind.CRUMB -> drawCircle(Color(0xFFA0522D).copy(alpha = fade), r * 0.06f * q.size, Offset(q.x, q.y))
             FxKind.SPARK -> drawCircle(colors.accent.copy(alpha = fade * 0.8f), r * (0.2f + q.t * 1.2f), Offset(q.x, q.y), style = Stroke(unit * 2f * fade + 0.5f))
+            FxKind.SPEECH -> {
+                // おしゃべりの吹き出し
+                val pop = min(1f, q.t * 8f)
+                val a = min(1f, (1f - q.t) * 4f)
+                paint.speech.textSize = r * 0.42f * (0.7f + 0.3f * pop)
+                val tw = paint.speech.measureText(q.text)
+                val w = tw + r * 0.4f
+                val h = r * 0.62f * (0.7f + 0.3f * pop)
+                val tl = Offset(q.x - w / 2, q.y - h / 2)
+                drawRoundRect(Color.White.copy(alpha = 0.95f * a), tl, Size(w, h), CornerRadius(h / 2))
+                drawRoundRect(colors.accent.copy(alpha = a), tl, Size(w, h), CornerRadius(h / 2), style = Stroke(unit * 1.2f))
+                val tail = Path().apply { moveTo(q.x - r * 0.1f, q.y + h / 2 - 1f); lineTo(q.x + r * 0.05f, q.y + h / 2 + r * 0.18f); lineTo(q.x + r * 0.12f, q.y + h / 2 - 1f); close() }
+                drawPath(tail, Color.White.copy(alpha = 0.95f * a))
+                drawIntoCanvas { c ->
+                    paint.speech.color = Color(0xFF424242).copy(alpha = a).toArgb()
+                    c.nativeCanvas.drawText(q.text, q.x, q.y + paint.speech.textSize * 0.35f, paint.speech)
+                }
+            }
         }
     }
 }
@@ -616,6 +648,35 @@ class LabelPaint(unit: Float) {
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
         textSize = unit * 11f
     }
+    val speech = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+}
+
+/** 頭の上の気持ちの吹き出し（ポンと出て、ふわふわして、消える） */
+fun DrawScope.drawEmoteBalloon(p: Pet, sim: PetSim, emoji: EmojiCache, colors: PetColors, unit: Float) {
+    if (p.emote == Emote.NONE || p.emote.emoji.isEmpty()) return
+    val r = sim.radius
+    val k = p.emoteTime
+    val out = (p.emoteLength - k).coerceAtLeast(0f)
+    val pop = if (k < 0.25f) {
+        val x = k / 0.25f
+        val c1 = 1.70158f; val c3 = c1 + 1f; val y = x - 1f
+        1f + c3 * y * y * y + c1 * y * y
+    } else 1f
+    val alpha = min(1f, out / 0.25f)
+    val air = (if (sim.aquarium) 0f else p.lift * 0.8f + p.hop * 0.55f) * r
+    val c = Offset(p.x + r * 0.75f, p.y - r * 1.55f - air + sin(k * 4f) * r * 0.05f)
+    val br = r * 0.42f * pop
+    if (br <= 0f) return
+    drawCircle(Color.Black.copy(alpha = 0.12f * alpha), br, c + Offset(unit, unit * 1.5f))
+    drawCircle(Color.White.copy(alpha = 0.95f * alpha), br, c)
+    drawCircle(colors.accent.copy(alpha = 0.8f * alpha), br, c, style = Stroke(unit * 1.2f))
+    drawCircle(Color.White.copy(alpha = 0.95f * alpha), br * 0.22f, Offset(c.x - br * 0.75f, c.y + br * 0.85f))
+    drawCircle(Color.White.copy(alpha = 0.95f * alpha), br * 0.12f, Offset(c.x - br * 1.05f, c.y + br * 1.25f))
+    val s = br * 1.25f
+    image(emoji.get(p.emote.emoji, (r * 0.6f).toInt()), c.x, c.y, s, s, alpha)
 }
 
 fun DrawScope.drawPetLabel(p: Pet, sim: PetSim, name: String, showName: Boolean, colors: PetColors, paint: LabelPaint, emoji: EmojiCache, unit: Float) {

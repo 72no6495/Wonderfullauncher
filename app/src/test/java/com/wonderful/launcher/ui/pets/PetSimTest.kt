@@ -34,6 +34,47 @@ class PetSimTest {
             }
         }
         assertTrue(s.particles.size <= 400)
+        assertTrue(s.sounds.size <= 12)
+        s.pets.forEach { p ->
+            assertTrue(p.energy in 0f..1f && p.gazeX.isFinite() && p.gazeY.isFinite() && p.hop in 0f..1f)
+            // 交流の相手はお互いを指している
+            p.partner?.let { q -> if (p.mood in PetSim.SOCIAL && q.mood in PetSim.SOCIAL) assertTrue(q.partner === p) }
+        }
+    }
+
+    @Test
+    fun foodIsAlwaysFinished() {
+        for (aq in listOf(false, true)) {
+            val s = sim(aq)
+            // お腹いっぱいでも残さない
+            s.pets.forEach { it.fullness = 1f }
+            repeat(10) { i -> s.dropFood(200f + i * 150f, 300f + (i % 3) * 200f) }
+            var t = 0
+            while (s.food.isNotEmpty() && t < 30 * 120) { s.step(1f / 30f); s.sounds.clear(); t++ }
+            assertTrue("leftover food (aquarium=$aq): ${s.food.size}", s.food.isEmpty())
+        }
+    }
+
+    @Test
+    fun petsInteractSleepAndEmote() {
+        val s = sim(false)
+        s.awakeSeconds = 20f
+        val seen = HashSet<Mood>()
+        val emotes = HashSet<Emote>()
+        val idles = HashSet<IdleAnim>()
+        val sfx = HashSet<Sfx>()
+        repeat(30 * 300) {
+            s.step(1f / 30f)
+            s.pets.forEach { p -> seen += p.mood; emotes += p.emote; idles += p.idleAnim }
+            s.sounds.forEach { sfx += it.sfx }
+            s.sounds.clear()
+        }
+        assertTrue("social: $seen", seen.any { it in setOf(Mood.CHAT, Mood.CHASE, Mood.DANCE, Mood.HUG, Mood.GREET) })
+        assertTrue("sleep: $seen", Mood.SLEEP in seen)
+        assertTrue("emotes: $emotes", emotes.size >= 5)
+        assertTrue("idles: $idles", idles.size >= 5)
+        assertTrue("sounds: $sfx", sfx.size >= 4)
+        assertTrue(s.friendship.isNotEmpty())
     }
 
     @Test fun roomLongRun() = run(false)
@@ -45,6 +86,7 @@ class PetSimTest {
         val r = Random(1)
         repeat(30000) { i ->
             s.step(if (i % 500 == 0) 0.2f else 1f / 30f)
+            s.sounds.clear()
             when {
                 i % 400 == 0 -> s.dropFood(r.nextFloat() * 2000f, r.nextFloat() * 1000f)
                 i % 333 == 0 -> s.pets.randomOrNull(r)?.let(s::pat)

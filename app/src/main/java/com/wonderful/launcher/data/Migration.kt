@@ -150,6 +150,7 @@ object Migration {
                 fps = if (s.pet.fps in listOf(15, 20, 30, 45, 60)) s.pet.fps else 30,
                 hungerHours = s.pet.hungerHours.finiteIn(0.5f, 72f, 6f),
                 legPairs = s.pet.legPairs.coerceIn(2, 5),
+                soundVolume = s.pet.soundVolume.finiteIn(0f, 1f, 0.7f),
             ),
         )
         if (!settingsReachable(s)) s = s.copy(longPressAction = GestureAction.SETTINGS)

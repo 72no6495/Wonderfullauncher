@@ -487,6 +487,15 @@ data class PetConfig(
     val accessory: Accessory = Accessory.MIXED,
     val legStyle: LegStyle = LegStyle.THIN,
     val legColor: LegColor = LegColor.THEME,
+    /** 効果音 */
+    val sound: Boolean = true,
+    val soundVolume: Float = 0.7f,
+    /** マナーモード・サイレント中は鳴らさない */
+    val soundRespectSilent: Boolean = true,
+    /** 仲間どうしで遊ぶ（おしゃべり・おにごっこ・ダンスなど） */
+    val social: Boolean = true,
+    /** 気持ちを吹き出しで出す */
+    val emotes: Boolean = true,
 )
 
 /** 飼っているアプリ 1 体 */

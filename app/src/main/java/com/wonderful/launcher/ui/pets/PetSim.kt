@@ -21,9 +21,31 @@ import kotlin.random.Random
  * - アクアリウム：アイコンが魚になって泳ぐ。エサは沈んでいく。
  */
 
-enum class Mood { IDLE, WANDER, SEEK_FOOD, EAT, SLEEP, SIT, PLAY, WATCH, HAPPY, CARRIED, CURIOUS }
+enum class Mood {
+    IDLE, WANDER, SEEK_FOOD, EAT, SLEEP, SIT, PLAY, WATCH, HAPPY, CARRIED, CURIOUS,
+    // 仲間との交流
+    APPROACH, AWAIT, CHAT, CHASE, FLEE, DANCE, HUG, GREET,
+}
 
-enum class FxKind { HEART, ZZZ, CRUMB, BUBBLE, NOTE, SPARK, HUNGRY }
+/** 交流の種類 */
+enum class Social { CHAT, CHASE, DANCE, HUG, GREET }
+
+/** 頭の上に出る気持ち（吹き出し）と、目の表情 */
+enum class Emote(val emoji: String) {
+    NONE(""), HAPPY("😊"), LOVE("💕"), ANGRY("💢"), SAD("💧"), SURPRISED("❗"), CONFUSED("❓"),
+    SWEAT("💦"), IDEA("💡"), SLEEPY("💤"), MUSIC("🎵"), YUMMY("😋"), HUNGRY("🍖"),
+}
+
+/** その場でのちょっとした仕草 */
+enum class IdleAnim { NONE, LOOK, STRETCH, HOP, SPIN, SCRATCH, TAP, YAWN, WIGGLE }
+
+/** 効果音の種類 */
+enum class Sfx { PAT, EAT, DROP, LAUNCH, PICKUP, PLOP, PLACE, REMOVE, KICK, BUBBLE, BLIP, YAWN, SNORE, LOVE, SURPRISE, ANGRY, SAD, HAPPY, HUNGRY, YUMMY }
+
+/** 鳴らしてほしい音（画面側でまとめて鳴らす）。[pitch] は 1 = そのまま */
+class SoundEvent(val sfx: Sfx, val x: Float, val pitch: Float, val volume: Float)
+
+enum class FxKind { HEART, ZZZ, CRUMB, BUBBLE, NOTE, SPARK, HUNGRY, SPEECH }
 
 class Particle(
     val kind: FxKind,
@@ -33,6 +55,8 @@ class Particle(
     var vy: Float,
     val life: Float,
     val size: Float,
+    /** 吹き出しの中身（SPEECH） */
+    val text: String = "",
 ) {
     var age = 0f
     val t: Float get() = (age / life).coerceIn(0f, 1f)
@@ -90,6 +114,36 @@ class Pet(val key: String, var x: Float, var y: Float, val seed: Int) {
     /** 持ち上げられている高さ（影の大きさに使う） */
     var lift = 0f
     val speed: Float get() = hypot(vx, vy)
+
+    /** 元気（0 になると眠くなる） */
+    var energy = 1f
+    /** 一緒に遊んでいる相手 */
+    var partner: Pet? = null
+    var social = Social.CHAT
+    /** 吹き出しの気持ち */
+    var emote = Emote.NONE
+    var emoteTime = 0f
+    var emoteLength = 0f
+    /** その場の仕草 */
+    var idleAnim = IdleAnim.NONE
+    var idleT = 0f
+    var idleLength = 0f
+    var nextIdle = 1f
+    /** 見ている方向（描画用、長さ 1 くらい） */
+    var gazeX = 1f
+    var gazeY = 0f
+    /** ぴょんと跳ねている高さ（0〜1）、伸び（-1〜1）、足をたたむ具合（0〜1） */
+    var hop = 0f
+    var stretch = 0f
+    var tuck = 0f
+    /** 鳴き声の高さ（アプリごとに違う） */
+    val voice: Float = 0.8f + ((seed ushr 3) and 0xFF) / 255f * 0.5f
+    var lastSfx = -10f
+    /** 交流で使う：踊りの角度・言い合いになったか */
+    var danceAngle = 0f
+    var argued = false
+    var talkTimer = 0f
+    var lastKick = -10f
 }
 
 class FurnitureBody(val id: String, val kind: FurnitureKind, var x: Float, var y: Float) {
@@ -124,7 +178,16 @@ class PetSim(seed: Int = 7) {
     val food = ArrayList<Food>()
     val furniture = ArrayList<FurnitureBody>()
     val particles = ArrayList<Particle>()
+    /** 鳴らす音。画面側が読んだら clear する */
+    val sounds = ArrayList<SoundEvent>()
+    /** 仲良し度（"a|b" → 0〜1） */
+    val friendship = HashMap<String, Float>()
+    /** 仲間どうしで遊ぶか */
+    var socialEnabled = true
+    /** 何秒起きていると眠くなるか（目安） */
+    var awakeSeconds = 150f
     private var foodIds = 0
+    private var foodCheck = 0f
     var time = 0f
         private set
 
@@ -195,6 +258,45 @@ class PetSim(seed: Int = 7) {
     fun furnitureFraction(f: FurnitureBody): Pair<Float, Float> =
         ((f.x - left) / (right - left)).coerceIn(0f, 1f) to ((f.y - top) / (bottom - top)).coerceIn(0f, 1f)
 
+    // ── 音と気持ち ──
+
+    /** 音を鳴らす（同じ子が短い間に鳴らしすぎないように） */
+    fun sfx(kind: Sfx, x: Float, pitch: Float = 1f, volume: Float = 1f) {
+        if (sounds.size < 12) sounds += SoundEvent(kind, x, pitch, volume)
+    }
+
+    private fun petSfx(p: Pet, kind: Sfx, volume: Float = 1f, minGap: Float = 0.25f) {
+        if (time - p.lastSfx < minGap) return
+        p.lastSfx = time
+        sfx(kind, p.x, p.voice, volume)
+    }
+
+    /** 気持ちを吹き出しで出す（目の表情も変わる） */
+    fun emote(p: Pet, e: Emote, length: Float = 1.8f, sound: Boolean = true) {
+        p.emote = e
+        p.emoteTime = 0f
+        p.emoteLength = length
+        if (!sound) return
+        when (e) {
+            Emote.HAPPY -> petSfx(p, Sfx.HAPPY)
+            Emote.LOVE -> petSfx(p, Sfx.LOVE)
+            Emote.ANGRY -> petSfx(p, Sfx.ANGRY)
+            Emote.SAD -> petSfx(p, Sfx.SAD, 0.7f)
+            Emote.SURPRISED -> petSfx(p, Sfx.SURPRISE)
+            Emote.YUMMY -> petSfx(p, Sfx.YUMMY)
+            Emote.HUNGRY -> petSfx(p, Sfx.HUNGRY, 0.6f)
+            Emote.SLEEPY -> petSfx(p, Sfx.YAWN, 0.7f)
+            Emote.CONFUSED, Emote.SWEAT, Emote.IDEA -> petSfx(p, Sfx.BLIP, 0.6f)
+            Emote.MUSIC, Emote.NONE -> Unit
+        }
+    }
+
+    private fun pairKey(a: Pet, b: Pet) = if (a.key < b.key) "${a.key}|${b.key}" else "${b.key}|${a.key}"
+    fun friendshipOf(a: Pet, b: Pet): Float = friendship[pairKey(a, b)] ?: 0.2f
+    private fun addFriendship(a: Pet, b: Pet, v: Float) {
+        friendship[pairKey(a, b)] = (friendshipOf(a, b) + v).coerceIn(0f, 1f)
+    }
+
     // ── 操作 ──
 
     fun petAt(x: Float, y: Float): Pet? =
@@ -216,7 +318,17 @@ class PetSim(seed: Int = 7) {
         p.joy = 1f
         p.infoTime = 3f
         p.affection = (p.affection + 0.03f).coerceAtMost(1f)
-        if (p.mood != Mood.CARRIED && p.mood != Mood.EAT) setMood(p, Mood.HAPPY, 1.4f)
+        sfx(Sfx.PAT, p.x, p.voice)
+        when {
+            // 寝ていたらびっくりして起きる
+            p.mood == Mood.SLEEP -> { endSocial(p); setMood(p, Mood.HAPPY, 1.6f); emote(p, Emote.SURPRISED, 1.2f); p.hop = 1f }
+            p.mood == Mood.CARRIED || p.mood == Mood.EAT -> Unit
+            else -> {
+                endSocial(p)
+                setMood(p, Mood.HAPPY, 1.4f)
+                if (p.emote != Emote.LOVE && p.emote != Emote.HAPPY) emote(p, if (p.affection > 0.6f && rnd.nextFloat() < 0.6f) Emote.LOVE else Emote.HAPPY, 1.6f, sound = false)
+            }
+        }
         repeat(3) {
             particles += Particle(FxKind.HEART, p.x + rnd.range(-radius, radius) * 0.6f, p.y - radius * 0.8f, rnd.range(-25f, 25f), rnd.range(-90f, -50f), rnd.range(1f, 1.6f), rnd.range(0.7f, 1.1f))
         }
@@ -226,14 +338,16 @@ class PetSim(seed: Int = 7) {
     /** 床をタップ：近くの子が見に来る（なついているほど来る） */
     fun call(x: Float, y: Float) {
         pets.forEach { p ->
-            if (p.mood in listOf(Mood.EAT, Mood.CARRIED, Mood.SEEK_FOOD)) return@forEach
+            if (p.mood in BUSY || p.mood == Mood.SLEEP) return@forEach
             val d = hypot(p.x - x, p.y - y)
             val chance = 0.25f + p.affection * 0.7f
             if (d < (right - left) * 0.6f && rnd.nextFloat() < chance) {
+                endSocial(p)
                 setMood(p, Mood.CURIOUS, 4f)
                 p.targetX = x + rnd.range(-radius, radius) * 1.5f
                 p.targetY = y + rnd.range(-radius, radius) * 1.5f
                 clampTarget(p)
+                if (rnd.nextFloat() < 0.4f) emote(p, if (rnd.nextBoolean()) Emote.CONFUSED else Emote.SURPRISED, 1.2f)
             }
         }
         particles += Particle(FxKind.SPARK, x, y, 0f, 0f, 0.5f, 1f)
@@ -244,16 +358,25 @@ class PetSim(seed: Int = 7) {
         val f = Food(foodIds++, x.coerceIn(left, right), y.coerceIn(top, if (aquarium) floorY else bottom))
         if (aquarium) { f.drop = 0f; f.vy = 20f } else f.drop = 1f
         food += f
-        // おなかが空いている子から順に向かう
-        pets.filter { it.fullness < 0.97f && it.mood !in listOf(Mood.CARRIED, Mood.EAT) }
-            .sortedBy { it.fullness }.take(3).forEach { goToFood(it, f) }
+        sfx(Sfx.DROP, f.x, 0.9f + rnd.nextFloat() * 0.3f)
+        // お腹が空いている子・近い子から向かう（お腹いっぱいでも、誰かは必ず食べに来る）
+        val free = pets.filter { it.mood !in BUSY && it.mood != Mood.SLEEP && it.mood != Mood.EAT }
+        free.sortedBy { it.fullness * 2f + hypot(it.x - f.x, it.y - f.y) / (right - left) }.take(2).forEach { p ->
+            endSocial(p)
+            goToFood(p, f)
+            if (rnd.nextFloat() < 0.5f) emote(p, if (p.fullness < 0.5f) Emote.SURPRISED else Emote.IDEA, 1.1f)
+        }
     }
 
     fun pickUp(p: Pet) {
+        endSocial(p)
         setMood(p, Mood.CARRIED, 999f)
         p.targetFurniture?.let { id -> furniture.firstOrNull { it.id == id }?.let { if (it.user == p.key) it.user = null } }
         p.targetFurniture = null
+        p.targetFood = null
         p.vx = 0f; p.vy = 0f
+        sfx(Sfx.PICKUP, p.x, p.voice)
+        emote(p, if (rnd.nextBoolean()) Emote.SURPRISED else Emote.SWEAT, 1.4f, sound = false)
     }
 
     fun carry(p: Pet, x: Float, y: Float, dt: Float) {
@@ -269,6 +392,8 @@ class PetSim(seed: Int = 7) {
         resetLegs(p)
         setMood(p, Mood.HAPPY, 0.8f)
         p.joy = 0.6f
+        p.hop = 0.6f
+        sfx(Sfx.PLOP, p.x, p.voice)
     }
 
     // ── 1 フレーム進める ──
@@ -302,7 +427,24 @@ class PetSim(seed: Int = 7) {
                 }
             }
         }
-        food.removeAll { it.amount <= 0f || it.age > 300f }
+        food.removeAll { it.amount <= 0f }
+        // 誰も向かっていないエサがあったら、手の空いている子を行かせる（残さず食べる）
+        foodCheck -= dt
+        if (foodCheck <= 0f && food.isNotEmpty() && pets.isNotEmpty()) {
+            foodCheck = 0.6f
+            food.forEach { f ->
+                val claimed = pets.any { it.targetFood == f.id && (it.mood == Mood.SEEK_FOOD || it.mood == Mood.EAT) }
+                if (!claimed) {
+                    // 交流中や寝ている子より、ひまな子を優先
+                    val free = pets.filter { it.mood !in BUSY && it.mood !in SOCIAL && it.mood != Mood.EAT }
+                    val pool = free.filter { it.mood != Mood.SLEEP }.ifEmpty { free }
+                    pool.minByOrNull { it.fullness * 2f + hypot(it.x - f.x, it.y - f.y) / (right - left) }?.let { p ->
+                        if (p.mood == Mood.SLEEP) emote(p, Emote.SURPRISED, 1f)
+                        goToFood(p, f)
+                    }
+                }
+            }
+        }
     }
 
     private fun stepFurniture(dt: Float) {
@@ -352,6 +494,7 @@ class PetSim(seed: Int = 7) {
             if (p.mood in listOf(Mood.SLEEP, Mood.SIT, Mood.WATCH) && m !in listOf(Mood.SLEEP, Mood.SIT, Mood.WATCH)) {
                 furniture.firstOrNull { it.user == p.key }?.user = null
             }
+            if (m != Mood.IDLE) { p.idleAnim = IdleAnim.NONE; p.stretch = 0f }
         }
         p.mood = m
         p.moodTime = 0f
@@ -359,7 +502,7 @@ class PetSim(seed: Int = 7) {
     }
 
     private fun goToFood(p: Pet, f: Food) {
-        setMood(p, Mood.SEEK_FOOD, 12f)
+        setMood(p, Mood.SEEK_FOOD, 20f)
         p.targetFood = f.id
         p.targetFurniture = null
     }
@@ -371,6 +514,17 @@ class PetSim(seed: Int = 7) {
         p.fullness = max(0f, p.fullness - dt / hungerSeconds)
         p.tail += dt * (2f + p.speed / max(radius, 1f) * 3f)
         p.lift += ((if (p.mood == Mood.CARRIED) 1f else 0f) - p.lift) * min(1f, dt * 10f)
+        p.hop = max(0f, p.hop - dt * 3f)
+        val wantTuck = if (p.mood == Mood.SLEEP) 1f else if (p.mood in listOf(Mood.SIT, Mood.WATCH, Mood.HUG)) 0.45f else 0f
+        p.tuck += (wantTuck - p.tuck) * min(1f, dt * 3f)
+        // 気持ちの吹き出し
+        if (p.emote != Emote.NONE) {
+            p.emoteTime += dt
+            if (p.emoteTime > p.emoteLength) p.emote = Emote.NONE
+        }
+        // 元気：動くと減り、寝ると戻る
+        if (p.mood == Mood.SLEEP) p.energy = min(1f, p.energy + dt / 25f)
+        else p.energy = max(0f, p.energy - dt / awakeSeconds * (if (p.speed > radius * 0.3f) 1.6f else 0.8f))
         // まばたき
         p.nextBlink -= dt
         if (p.nextBlink <= 0f) { p.blink = 1f; p.nextBlink = rnd.range(1.5f, 5f) }
@@ -380,8 +534,9 @@ class PetSim(seed: Int = 7) {
         if (p.fullness < 0.3f && p.mood != Mood.SLEEP) {
             p.hungryFx -= dt
             if (p.hungryFx <= 0f) {
-                p.hungryFx = rnd.range(5f, 9f)
-                particles += Particle(FxKind.HUNGRY, p.x, p.y - radius * 1.2f, 0f, -12f, 2.2f, 1f)
+                p.hungryFx = rnd.range(6f, 11f)
+                if (rnd.nextBoolean()) particles += Particle(FxKind.HUNGRY, p.x, p.y - radius * 1.2f, 0f, -12f, 2.2f, 1f)
+                else emote(p, if (rnd.nextBoolean()) Emote.HUNGRY else Emote.SAD, 2f)
             }
         }
 
@@ -391,16 +546,88 @@ class PetSim(seed: Int = 7) {
         }
 
         think(p, dt)
+        if (p.mood == Mood.IDLE) stepIdle(p, dt) else { p.idleAnim = IdleAnim.NONE; p.stretch *= 1f - min(1f, dt * 6f) }
         move(p, dt)
+        updateGaze(p, dt)
         if (!aquarium) updateLegs(p, dt)
         if (aquarium) {
-            val want = if (abs(p.vx) > 4f) (if (p.vx > 0f) 1f else -1f) else p.face
+            val want = when {
+                p.idleAnim == IdleAnim.SPIN -> if (sin(p.idleT / max(p.idleLength, 0.1f) * PI.toFloat() * 2f) > 0f) 1f else -1f
+                abs(p.vx) > 4f -> if (p.vx > 0f) 1f else -1f
+                p.partner != null && p.mood in SOCIAL -> if (p.partner!!.x > p.x) 1f else -1f
+                else -> p.face
+            }
             p.face += (want - p.face) * min(1f, dt * 5f)
             // 口からぷくぷく
             if (rnd.nextFloat() < dt * 0.35f) {
                 particles += Particle(FxKind.BUBBLE, p.x + p.face * radius * 0.9f, p.y - radius * 0.1f, rnd.range(-5f, 5f), rnd.range(-60f, -40f), rnd.range(2f, 3f), rnd.range(0.3f, 0.6f))
                 trimParticles()
             }
+        }
+    }
+
+    /** 見ている方向（エサ・相手・きょろきょろ） */
+    private fun updateGaze(p: Pet, dt: Float) {
+        var gx = cos(p.heading)
+        var gy = sin(p.heading)
+        val partner = p.partner
+        val f = food.firstOrNull { it.id == p.targetFood }
+        when {
+            p.idleAnim == IdleAnim.LOOK -> { gx = sin(p.idleT * 2.6f); gy = 0.2f * cos(p.idleT * 1.3f) }
+            partner != null && p.mood in SOCIAL -> { val d = hypot(partner.x - p.x, partner.y - p.y).coerceAtLeast(1f); gx = (partner.x - p.x) / d; gy = (partner.y - p.y) / d }
+            f != null -> { val d = hypot(f.x - p.x, f.y - p.y).coerceAtLeast(1f); gx = (f.x - p.x) / d; gy = (f.y - p.y) / d }
+            p.mood == Mood.WATCH -> { gx = 0f; gy = -1f }
+        }
+        p.gazeX += (gx - p.gazeX) * min(1f, dt * 6f)
+        p.gazeY += (gy - p.gazeY) * min(1f, dt * 6f)
+    }
+
+    /** その場の仕草（きょろきょろ・伸び・ジャンプ・回る・かく・あくび…） */
+    private fun stepIdle(p: Pet, dt: Float) {
+        if (p.idleAnim == IdleAnim.NONE) {
+            p.nextIdle -= dt
+            if (p.nextIdle <= 0f) {
+                val choices = mutableListOf(IdleAnim.LOOK, IdleAnim.LOOK, IdleAnim.STRETCH, IdleAnim.HOP, IdleAnim.SPIN, IdleAnim.WIGGLE)
+                if (!aquarium) { choices += IdleAnim.SCRATCH; choices += IdleAnim.TAP }
+                if (p.energy < 0.6f) { choices += IdleAnim.YAWN; choices += IdleAnim.YAWN }
+                p.idleAnim = choices.random(rnd)
+                p.idleT = 0f
+                p.idleLength = when (p.idleAnim) {
+                    IdleAnim.LOOK -> 2.4f
+                    IdleAnim.STRETCH -> 1.4f
+                    IdleAnim.HOP -> 0.9f
+                    IdleAnim.SPIN -> 1.1f
+                    IdleAnim.SCRATCH, IdleAnim.TAP -> 1.6f
+                    IdleAnim.YAWN -> 1.8f
+                    IdleAnim.WIGGLE -> 1f
+                    IdleAnim.NONE -> 0f
+                }
+                when (p.idleAnim) {
+                    IdleAnim.YAWN -> emote(p, Emote.SLEEPY, 1.6f)
+                    IdleAnim.WIGGLE -> { p.joy = 0.5f; if (rnd.nextFloat() < 0.4f) emote(p, Emote.MUSIC, 1.2f, sound = false) }
+                    IdleAnim.SCRATCH -> if (rnd.nextFloat() < 0.3f) emote(p, Emote.SWEAT, 1f, sound = false)
+                    else -> Unit
+                }
+            }
+            return
+        }
+        p.idleT += dt
+        val k = (p.idleT / p.idleLength).coerceIn(0f, 1f)
+        when (p.idleAnim) {
+            IdleAnim.STRETCH -> p.stretch = sin(k * PI.toFloat())
+            IdleAnim.YAWN -> p.stretch = 0.6f * sin(k * PI.toFloat())
+            IdleAnim.HOP -> {
+                val h = abs(sin(k * PI.toFloat() * 2f))
+                if (h > p.hop) p.hop = h
+                if (aquarium) p.vy -= radius * 6f * dt * cos(k * PI.toFloat() * 2f)
+            }
+            IdleAnim.SPIN -> if (!aquarium) p.heading += 2f * PI.toFloat() * dt / p.idleLength
+            else -> Unit
+        }
+        if (p.idleT >= p.idleLength) {
+            p.idleAnim = IdleAnim.NONE
+            p.stretch = 0f
+            p.nextIdle = rnd.range(0.8f, 3f)
         }
     }
 
@@ -412,35 +639,43 @@ class PetSim(seed: Int = 7) {
                 if (f == null || f.amount <= 0f) { pickNext(p); return }
                 p.targetX = f.x; p.targetY = if (aquarium) f.y - radius * 0.3f else f.y
                 val ready = aquarium || f.landed
-                if (ready && hypot(p.x - f.x, p.y - p.targetY) < radius * 0.8f) setMood(p, Mood.EAT, 2.5f)
+                if (ready && hypot(p.x - f.x, p.y - p.targetY) < radius * 0.8f) setMood(p, Mood.EAT, 999f)
                 else if (p.moodTime > p.moodLength) pickNext(p)
             }
             Mood.EAT -> {
                 val f = food.firstOrNull { it.id == p.targetFood }
                 val bowl = furniture.firstOrNull { it.id == p.targetFurniture && it.kind == FurnitureKind.BOWL }
-                if (f == null && bowl == null) { pickNext(p); return }
-                val gain = dt * 0.16f
+                if (f == null && bowl == null) { finishMeal(p); return }
                 if (f != null) {
-                    if (f.amount <= 0f) { pickNext(p); return }
-                    f.amount -= dt * 0.45f
-                } else if (bowl != null && hypot(p.x - bowl.x, p.y - bowl.y) > radius * 1.6f) { pickNext(p); return }
-                p.fullness = (p.fullness + gain).coerceAtMost(1f)
+                    // エサは無くなるまで食べる（お腹いっぱいでも残さない）
+                    if (f.amount <= 0f) { finishMeal(p); return }
+                    if (hypot(p.x - f.x, p.y - (if (aquarium) f.y - radius * 0.3f else f.y)) > radius * 1.4f) { goToFood(p, f); return }
+                    val bite = min(f.amount, dt * 0.5f)
+                    f.amount -= bite
+                    p.fullness = (p.fullness + bite * 0.35f).coerceAtMost(1f)
+                } else if (bowl != null) {
+                    if (hypot(p.x - bowl.x, p.y - bowl.y) > radius * 1.6f) { pickNext(p); return }
+                    p.fullness = (p.fullness + dt * 0.16f).coerceAtMost(1f)
+                    if (p.fullness >= 1f || p.moodTime > 6f) { finishMeal(p); return }
+                }
                 if (rnd.nextFloat() < dt * 6f) {
                     particles += Particle(if (aquarium) FxKind.BUBBLE else FxKind.CRUMB, p.x + rnd.range(-10f, 10f), p.y + radius * 0.2f, rnd.range(-40f, 40f), rnd.range(-70f, -30f), 0.6f, 0.5f)
                 }
-                if (p.fullness >= 1f || p.moodTime > 6f) {
-                    p.affection = (p.affection + 0.01f).coerceAtMost(1f)
-                    p.joy = 0.7f
-                    particles += Particle(FxKind.NOTE, p.x, p.y - radius, 10f, -40f, 1.4f, 1f)
-                    pickNext(p)
-                }
+                if (rnd.nextFloat() < dt * 3f) petSfx(p, Sfx.EAT, 0.8f, 0.3f)
             }
             Mood.SLEEP -> {
                 if (rnd.nextFloat() < dt * 0.9f) particles += Particle(FxKind.ZZZ, p.x + radius * 0.4f, p.y - radius * 0.8f, 14f, -26f, 2.2f, rnd.range(0.7f, 1.1f))
-                if (p.moodTime > p.moodLength) pickNext(p)
+                if (rnd.nextFloat() < dt * 0.25f) petSfx(p, Sfx.SNORE, 0.35f, 2f)
+                if (p.moodTime > p.moodLength || p.energy >= 1f) {
+                    // 起きたら伸び
+                    setMood(p, Mood.IDLE, rnd.range(1.5f, 3f))
+                    p.idleAnim = IdleAnim.STRETCH; p.idleT = 0f; p.idleLength = 1.4f
+                    emote(p, Emote.SLEEPY, 1.4f)
+                }
             }
             Mood.WATCH -> {
                 if (rnd.nextFloat() < dt * 0.3f) particles += Particle(FxKind.NOTE, p.x, p.y - radius, 8f, -30f, 1.4f, 0.8f)
+                if (rnd.nextFloat() < dt * 0.08f) emote(p, listOf(Emote.HAPPY, Emote.SURPRISED, Emote.SAD, Emote.LOVE).random(rnd), 1.5f)
                 if (p.moodTime > p.moodLength) pickNext(p)
             }
             Mood.PLAY -> {
@@ -448,17 +683,19 @@ class PetSim(seed: Int = 7) {
                 if (ball == null || p.moodTime > p.moodLength) { pickNext(p); return }
                 p.targetX = ball.x; p.targetY = ball.y
                 val d = hypot(p.x - ball.x, p.y - ball.y)
-                if (d < radius + furnitureRadius(ball.kind)) {
+                if (d < radius + furnitureRadius(ball.kind) && time - p.lastKick > 0.6f) {
+                    p.lastKick = time
                     // 蹴る
                     val a = atan2(ball.y - p.y, ball.x - p.x) + rnd.range(-0.4f, 0.4f)
                     val power = radius * rnd.range(5f, 9f)
                     ball.vx = cos(a) * power
                     ball.vy = sin(a) * power
                     p.joy = 0.5f
-                    if (rnd.nextFloat() < 0.4f) particles += Particle(FxKind.NOTE, p.x, p.y - radius, 0f, -40f, 1f, 0.8f)
+                    sfx(Sfx.KICK, ball.x, rnd.range(0.9f, 1.2f))
+                    if (rnd.nextFloat() < 0.3f) emote(p, Emote.HAPPY, 1.2f, sound = false)
                 }
             }
-            Mood.SIT, Mood.HAPPY, Mood.IDLE -> if (p.moodTime > p.moodLength) pickNext(p)
+            Mood.SIT, Mood.HAPPY, Mood.IDLE -> if (p.moodTime > p.moodLength && p.idleAnim == IdleAnim.NONE) pickNext(p)
             Mood.WANDER, Mood.CURIOUS -> {
                 val fid = p.targetFurniture
                 val f = fid?.let { id -> furniture.firstOrNull { it.id == id } }
@@ -466,27 +703,222 @@ class PetSim(seed: Int = 7) {
                 if (f != null && f.kind == FurnitureKind.BALL) { p.targetX = f.x; p.targetY = f.y }
                 val arrived = hypot(p.targetX - p.x, p.targetY - p.y) < radius * (if (f != null) 0.6f else 0.9f) ||
                     (f?.kind == FurnitureKind.BALL && hypot(f.x - p.x, f.y - p.y) < radius * 1.5f)
+                // 寝床の近くまで来たら（先客がいて近づけなくても）そこで寝る
+                val nearBed = f != null && p.energy < 0.3f && f.kind in SLEEP_SPOTS && hypot(p.targetX - p.x, p.targetY - p.y) < radius * 1.8f
                 when {
                     // 家具に着いたら使う
-                    arrived && p.mood == Mood.WANDER && f != null -> useFurniture(p, f)
+                    (arrived || nearBed) && p.mood == Mood.WANDER && f != null -> useFurniture(p, f)
+                    // 眠いのに寝床に着けなかったらその場で寝る
+                    p.moodTime > p.moodLength && p.energy < 0.3f -> { endWork(p); setMood(p, Mood.SLEEP, rnd.range(12f, 25f)) }
                     arrived || p.moodTime > p.moodLength ->
                         if (p.mood == Mood.CURIOUS) { setMood(p, Mood.IDLE, rnd.range(1f, 2.5f)); p.joy = 0.3f } else pickNext(p)
                 }
             }
             Mood.CARRIED -> Unit
+            Mood.APPROACH, Mood.AWAIT, Mood.CHAT, Mood.CHASE, Mood.FLEE, Mood.DANCE, Mood.HUG, Mood.GREET -> thinkSocial(p, dt)
         }
     }
 
-    private fun pickNext(p: Pet) {
-        p.targetFood = null
+    private fun finishMeal(p: Pet) {
+        p.affection = (p.affection + 0.01f).coerceAtMost(1f)
+        p.joy = 0.7f
+        particles += Particle(FxKind.NOTE, p.x, p.y - radius, 10f, -40f, 1.4f, 1f)
+        // まだ残っているエサがあれば続けて食べに行く
+        val next = food.filter { it.amount > 0f && pets.none { o -> o !== p && o.targetFood == it.id && o.mood == Mood.EAT } }
+            .minByOrNull { hypot(it.x - p.x, it.y - p.y) }
+        if (next != null) { goToFood(p, next); return }
+        emote(p, Emote.YUMMY, 1.6f)
+        pickNext(p)
+    }
+
+    // ── 仲間との交流 ──
+
+    private fun startSocial(p: Pet, q: Pet) {
+        val f = friendshipOf(p, q)
+        val roll = rnd.nextFloat()
+        val kind = when {
+            roll < 0.32f -> Social.CHAT
+            roll < 0.52f -> Social.CHASE
+            roll < 0.68f -> Social.DANCE
+            roll < 0.84f && f > 0.35f -> Social.HUG
+            else -> Social.GREET
+        }
+        p.partner = q; q.partner = p
+        p.social = kind; q.social = kind
+        setMood(p, Mood.APPROACH, 9f)
+        endWork(q)
+        setMood(q, Mood.AWAIT, 9f)
+        q.vx *= 0.3f; q.vy *= 0.3f
+        emote(p, if (kind == Social.CHASE) Emote.IDEA else Emote.HAPPY, 1.1f, sound = false)
+        if (rnd.nextFloat() < 0.5f) emote(q, Emote.SURPRISED, 1f)
+    }
+
+    /** 家具やエサの予定を手放す */
+    private fun endWork(p: Pet) {
         p.targetFurniture?.let { id -> furniture.firstOrNull { it.id == id && it.user == p.key }?.user = null }
         p.targetFurniture = null
-        // おなかが空いていたらエサかエサ皿へ
-        if (p.fullness < 0.6f) {
-            val f = food.filter { it.amount > 0f }.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
+        p.targetFood = null
+    }
+
+    /** 交流をやめる（相手も） */
+    private fun endSocial(p: Pet) {
+        val q = p.partner ?: return
+        p.partner = null
+        if (q.partner === p) {
+            q.partner = null
+            if (q.mood in SOCIAL) setMood(q, Mood.IDLE, rnd.range(0.5f, 1.5f))
+        }
+    }
+
+    private fun beginInteraction(p: Pet, q: Pet) {
+        val len = when (p.social) {
+            Social.CHAT -> rnd.range(3.5f, 6.5f)
+            Social.CHASE -> rnd.range(4f, 7f)
+            Social.DANCE -> rnd.range(3f, 5f)
+            Social.HUG -> rnd.range(2f, 3.2f)
+            Social.GREET -> 1.3f
+        }
+        val (mp, mq) = when (p.social) {
+            Social.CHAT -> Mood.CHAT to Mood.CHAT
+            Social.CHASE -> Mood.CHASE to Mood.FLEE
+            Social.DANCE -> Mood.DANCE to Mood.DANCE
+            Social.HUG -> Mood.HUG to Mood.HUG
+            Social.GREET -> Mood.GREET to Mood.GREET
+        }
+        setMood(p, mp, len); setMood(q, mq, len)
+        p.argued = false; q.argued = false
+        p.talkTimer = 0.2f; q.talkTimer = 0.6f
+        val a = atan2(p.y - q.y, p.x - q.x)
+        p.danceAngle = a; q.danceAngle = a + PI.toFloat()
+        when (p.social) {
+            Social.GREET -> { p.hop = 1f; q.hop = 1f; speech(p, "👋"); emote(q, Emote.HAPPY, 1.2f) }
+            Social.HUG -> { emote(p, Emote.LOVE, 2f); emote(q, Emote.LOVE, 2f, sound = false) }
+            Social.DANCE -> { emote(p, Emote.MUSIC, 2f, sound = false); emote(q, Emote.MUSIC, 2f, sound = false); sfx(Sfx.HAPPY, p.x, p.voice) }
+            Social.CHASE -> { emote(q, Emote.SURPRISED, 1f); speech(p, "!") }
+            Social.CHAT -> Unit
+        }
+    }
+
+    private fun speech(p: Pet, text: String) {
+        particles += Particle(FxKind.SPEECH, p.x + rnd.range(-6f, 6f), p.y - radius * 1.5f, rnd.range(-8f, 8f), -16f, 1.3f, 1f, text)
+        trimParticles()
+    }
+
+    private fun thinkSocial(p: Pet, dt: Float) {
+        val q = p.partner
+        // 相手がいなくなった・別のことを始めたら終わり
+        if (q == null || q.partner !== p || q.mood !in SOCIAL || q !in pets) {
+            p.partner = null
+            setMood(p, Mood.IDLE, rnd.range(0.5f, 1.5f))
+            return
+        }
+        val d = hypot(q.x - p.x, q.y - p.y)
+        when (p.mood) {
+            Mood.APPROACH -> {
+                val a = atan2(p.y - q.y, p.x - q.x)
+                p.targetX = q.x + cos(a) * radius * 2.1f
+                p.targetY = q.y + sin(a) * radius * 2.1f
+                clampTarget(p)
+                if (d < radius * 2.6f) beginInteraction(p, q)
+                else if (p.moodTime > p.moodLength) endSocial(p).also { setMood(p, Mood.IDLE, 1f) }
+            }
+            Mood.AWAIT -> {
+                // 近づいてくる相手の方を向いて待つ
+                p.heading += angleDiff(p.heading, atan2(q.y - p.y, q.x - p.x)) * min(1f, dt * 4f)
+                if (p.moodTime > p.moodLength) { endSocial(p); setMood(p, Mood.IDLE, 1f) }
+            }
+            Mood.CHAT -> {
+                p.heading += angleDiff(p.heading, atan2(q.y - p.y, q.x - p.x)) * min(1f, dt * 4f)
+                p.talkTimer -= dt
+                if (p.talkTimer <= 0f) {
+                    p.talkTimer = rnd.range(0.9f, 1.8f)
+                    speech(p, TALK.random(rnd))
+                    // ペチャクチャ
+                    repeat(1 + rnd.nextInt(3)) { i -> sounds += SoundEvent(Sfx.BLIP, p.x, p.voice * rnd.range(0.85f, 1.25f), 0.55f - i * 0.1f) }
+                    p.joy = max(p.joy, 0.3f)
+                    val r = rnd.nextFloat()
+                    when {
+                        r < 0.12f && !q.argued -> { emote(p, Emote.ANGRY, 1.5f); p.argued = true }
+                        r < 0.3f -> emote(p, listOf(Emote.HAPPY, Emote.LOVE, Emote.CONFUSED, Emote.SURPRISED, Emote.IDEA).random(rnd), 1.4f, sound = false)
+                    }
+                }
+                if (p.moodTime > p.moodLength) finishSocial(p, q)
+            }
+            Mood.CHASE -> {
+                p.targetX = q.x; p.targetY = q.y
+                if (d < radius * 1.5f && p.moodTime > 0.6f) {
+                    // タッチ！ 鬼を交代
+                    speech(p, "タッチ!")
+                    emote(q, Emote.SURPRISED, 1f)
+                    sfx(Sfx.KICK, p.x, 1.4f, 0.7f)
+                    val remain = p.moodLength - p.moodTime
+                    setMood(p, Mood.FLEE, remain); setMood(q, Mood.CHASE, remain)
+                    p.hop = 1f
+                } else if (p.moodTime > p.moodLength) finishSocial(p, q)
+            }
+            Mood.FLEE -> {
+                // 鬼から離れる方へ（壁際では横へ逃げる）
+                val a = atan2(p.y - q.y, p.x - q.x) + sin(time * 1.3f + p.seed) * 0.8f
+                p.targetX = p.x + cos(a) * radius * 4f
+                p.targetY = p.y + sin(a) * radius * 4f
+                clampTarget(p)
+                if (p.moodTime > p.moodLength) finishSocial(p, q)
+            }
+            Mood.DANCE -> {
+                // 2 人で輪になってくるくる
+                val mx = (p.x + q.x) / 2
+                val my = (p.y + q.y) / 2
+                p.danceAngle += dt * 2.2f
+                p.targetX = mx + cos(p.danceAngle) * radius * 1.4f
+                p.targetY = my + sin(p.danceAngle) * radius * 1.4f
+                if (rnd.nextFloat() < dt * 2f) particles += Particle(FxKind.NOTE, p.x, p.y - radius, rnd.range(-20f, 20f), -40f, 1.2f, 0.8f)
+                if (rnd.nextFloat() < dt * 1.5f) p.hop = 0.7f
+                if (p.moodTime > p.moodLength) finishSocial(p, q)
+            }
+            Mood.HUG -> {
+                val a = atan2(p.y - q.y, p.x - q.x)
+                p.targetX = q.x + cos(a) * radius * 1.25f
+                p.targetY = q.y + sin(a) * radius * 1.25f
+                p.joy = max(p.joy, 0.4f)
+                if (rnd.nextFloat() < dt * 3f) particles += Particle(FxKind.HEART, (p.x + q.x) / 2 + rnd.range(-10f, 10f), (p.y + q.y) / 2 - radius, rnd.range(-15f, 15f), -50f, 1.2f, 0.8f)
+                if (p.moodTime > p.moodLength) finishSocial(p, q)
+            }
+            Mood.GREET -> {
+                p.heading += angleDiff(p.heading, atan2(q.y - p.y, q.x - p.x)) * min(1f, dt * 5f)
+                if (p.moodTime > p.moodLength) finishSocial(p, q)
+            }
+            else -> Unit
+        }
+    }
+
+    private fun finishSocial(p: Pet, q: Pet) {
+        val fought = p.argued || q.argued
+        addFriendship(p, q, if (fought) 0.02f else 0.08f)
+        p.partner = null; q.partner = null
+        if (fought && rnd.nextFloat() < 0.5f) {
+            // けんかしたまま… でもすぐ仲直り
+            emote(p, Emote.ANGRY, 1.2f); emote(q, Emote.SAD, 1.2f)
+        } else {
+            emote(p, if (p.social == Social.HUG) Emote.LOVE else Emote.HAPPY, 1.4f)
+            emote(q, if (rnd.nextBoolean()) Emote.HAPPY else Emote.MUSIC, 1.4f, sound = false)
+        }
+        setMood(p, Mood.IDLE, rnd.range(1f, 2.5f))
+        setMood(q, Mood.IDLE, rnd.range(1f, 2.5f))
+    }
+
+    private fun pickNext(p: Pet) {
+        endWork(p)
+        endSocial(p)
+        // エサが残っていたら食べに行く
+        val leftover = food.filter { f -> f.amount > 0f && pets.none { it !== p && it.targetFood == f.id && (it.mood == Mood.EAT || it.mood == Mood.SEEK_FOOD) } }
+            .minByOrNull { hypot(it.x - p.x, it.y - p.y) }
+        if (leftover != null || (p.fullness < 0.6f && food.isNotEmpty())) {
+            val f = leftover ?: food.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
             if (f != null) { goToFood(p, f); return }
+        }
+        if (p.fullness < 0.45f) {
             val bowl = furniture.filter { it.kind == FurnitureKind.BOWL }.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
-            if (bowl != null && p.fullness < 0.45f) {
+            if (bowl != null) {
                 setMood(p, Mood.WANDER, 12f)
                 p.targetFurniture = bowl.id
                 p.targetX = bowl.x; p.targetY = bowl.y + radius * 0.9f
@@ -494,10 +926,30 @@ class PetSim(seed: Int = 7) {
                 return
             }
         }
+        // 眠くなったら寝床へ（無ければその場で）
+        if (p.energy < 0.22f) {
+            val beds = furniture.filter { it.user == null && it.kind in SLEEP_SPOTS && (aquarium == it.kind.aquarium || it.kind == FurnitureKind.ROCK) }
+            val bed = beds.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
+            emote(p, Emote.SLEEPY, 1.6f)
+            if (bed != null) {
+                setMood(p, Mood.WANDER, 14f)
+                p.targetFurniture = bed.id
+                val spot = spotFor(p, bed)
+                p.targetX = spot.first; p.targetY = spot.second
+                clampTarget(p)
+            } else setMood(p, Mood.SLEEP, rnd.range(12f, 25f))
+            return
+        }
         val r = rnd.nextFloat()
         val usable = furniture.filter { it.user == null && it.kind.usable(aquarium) }
+        // 一緒に遊べる相手（仲良しほど選ばれやすい）
+        val mates = if (socialEnabled) pets.filter { it !== p && it.partner == null && it.mood in FREE } else emptyList()
         when {
-            r < 0.3f && usable.isNotEmpty() -> {
+            r < 0.28f && mates.isNotEmpty() -> {
+                val q = mates.maxByOrNull { friendshipOf(p, it) + rnd.nextFloat() * 0.6f - hypot(it.x - p.x, it.y - p.y) / (right - left) }!!
+                startSocial(p, q)
+            }
+            r < 0.5f && usable.isNotEmpty() -> {
                 val f = usable.random(rnd)
                 setMood(p, Mood.WANDER, 14f)
                 p.targetFurniture = f.id
@@ -505,16 +957,7 @@ class PetSim(seed: Int = 7) {
                 p.targetX = spot.first; p.targetY = spot.second
                 clampTarget(p)
             }
-            r < 0.42f && pets.size > 1 -> {
-                // 他の子に会いに行く
-                val o = pets.filter { it !== p }.random(rnd)
-                setMood(p, Mood.WANDER, 8f)
-                val a = rnd.range(0f, 2 * PI.toFloat())
-                p.targetX = o.x + cos(a) * radius * 2.2f
-                p.targetY = o.y + sin(a) * radius * 2.2f
-                clampTarget(p)
-            }
-            r < 0.75f -> setMood(p, Mood.IDLE, rnd.range(2f, 6f))
+            r < 0.8f -> { setMood(p, Mood.IDLE, rnd.range(2.5f, 6f)); p.nextIdle = rnd.range(0.3f, 1.5f) }
             else -> {
                 // 近場をぶらぶら
                 setMood(p, Mood.WANDER, 8f)
@@ -559,9 +1002,9 @@ class PetSim(seed: Int = 7) {
             FurnitureKind.BALL -> { setMood(p, Mood.PLAY, rnd.range(4f, 8f)); p.targetFurniture = f.id }
             FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id }
             FurnitureKind.TREE, FurnitureKind.STUMP -> { setMood(p, Mood.SIT, rnd.range(4f, 10f)); p.targetFurniture = f.id }
-            FurnitureKind.ROCK -> if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(4f, 9f)); p.targetFurniture = f.id } else { setMood(p, Mood.SIT, rnd.range(3f, 7f)); p.targetFurniture = f.id }
+            FurnitureKind.ROCK -> if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id } else { setMood(p, Mood.SIT, rnd.range(3f, 7f)); p.targetFurniture = f.id }
             FurnitureKind.CASTLE, FurnitureKind.CHEST, FurnitureKind.SHELL ->
-                if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(4f, 9f)); p.targetFurniture = f.id } else setMood(p, Mood.IDLE, 2f)
+                if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id } else setMood(p, Mood.IDLE, 2f)
             else -> { setMood(p, Mood.IDLE, rnd.range(1.5f, 3f)); p.joy = 0.2f }
         }
     }
@@ -577,10 +1020,11 @@ class PetSim(seed: Int = 7) {
     }
 
     private fun move(p: Pet, dt: Float) {
-        val moving = p.mood in listOf(Mood.WANDER, Mood.SEEK_FOOD, Mood.PLAY, Mood.CURIOUS) ||
+        val moving = p.mood in MOVING ||
             (p.mood == Mood.EAT && p.targetFurniture != null && hypot(p.x - p.targetX, p.y - p.targetY) > radius * 0.6f)
         val maxSpeed = radius * (if (aquarium) 2.2f else 2.6f) * speedFactor *
-            (if (p.mood == Mood.SEEK_FOOD || p.mood == Mood.PLAY) 1.5f else 1f) * (0.6f + 0.4f * p.fullness.coerceAtLeast(0.3f))
+            (if (p.mood in FAST) 1.5f else if (p.mood == Mood.DANCE || p.mood == Mood.HUG) 1.2f else 1f) *
+            (0.6f + 0.4f * p.fullness.coerceAtLeast(0.3f)) * (if (p.energy < 0.25f) 0.75f else 1f)
         var ax = 0f
         var ay = 0f
         if (moving) {
@@ -626,6 +1070,8 @@ class PetSim(seed: Int = 7) {
             val a = pets[i]
             val b = pets[j]
             if (a.mood == Mood.CARRIED || b.mood == Mood.CARRIED) continue
+            // くっついている 2 人は離さない
+            if (a.partner === b && (a.mood == Mood.HUG || a.mood == Mood.DANCE)) continue
             val dx = b.x - a.x
             val dy = b.y - a.y
             val d = hypot(dx, dy)
@@ -657,8 +1103,9 @@ class PetSim(seed: Int = 7) {
     }
 
     private fun restFoot(p: Pet, leg: Leg, lead: Float): Pair<Float, Float> {
-        val a = p.heading + legAngle(leg) * 0.92f
-        val reach = radius * 1.65f
+        // 寝ている時は足をたたむ
+        val a = p.heading + legAngle(leg) * (0.92f - 0.25f * p.tuck)
+        val reach = radius * (1.65f - 0.7f * p.tuck)
         return (p.x + cos(a) * reach + p.vx * lead) to (p.y + sin(a) * reach + p.vy * lead)
     }
 
@@ -710,6 +1157,24 @@ class PetSim(seed: Int = 7) {
                     }
                 }
                 break
+            }
+        }
+        // 仕草：前足で頭をかく / 足をトントン
+        if (p.idleAnim == IdleAnim.SCRATCH || p.idleAnim == IdleAnim.TAP) {
+            p.legs.firstOrNull { it.index == 0 && it.side == 1 }?.let { l ->
+                val (hx, hy) = hip(p, l)
+                val k = p.idleT
+                if (p.idleAnim == IdleAnim.SCRATCH) {
+                    // 頭の上の方へ持ち上げてカキカキ
+                    val a = p.heading + legAngle(l) * 0.35f
+                    l.footX = hx + cos(a) * radius * 0.9f + sin(k * 28f) * radius * 0.12f
+                    l.footY = hy + sin(a) * radius * 0.9f - radius * 0.5f + cos(k * 28f) * radius * 0.08f
+                } else {
+                    val (rx, ry) = restFoot(p, l, 0f)
+                    l.footX = rx
+                    l.footY = ry - abs(sin(k * 9f)) * radius * 0.35f
+                }
+                l.t = 1f
             }
         }
         // 押されたり急に動いたりして足が届かなくなったら、グループに関係なくすぐ踏み出す
@@ -768,6 +1233,18 @@ class PetSim(seed: Int = 7) {
     fun stats(): Map<String, Pair<Float, Float>> = pets.associate { it.key to (it.fullness to it.affection) }
 
     companion object {
+        /** 他のことに夢中で呼んでも来ない */
+        val BUSY = setOf(Mood.CARRIED, Mood.SEEK_FOOD, Mood.EAT)
+        /** 交流中 */
+        val SOCIAL = setOf(Mood.APPROACH, Mood.AWAIT, Mood.CHAT, Mood.CHASE, Mood.FLEE, Mood.DANCE, Mood.HUG, Mood.GREET)
+        /** 遊びに誘える */
+        val FREE = setOf(Mood.IDLE, Mood.WANDER, Mood.CURIOUS, Mood.SIT, Mood.HAPPY)
+        /** 目的地へ動く */
+        val MOVING = setOf(Mood.WANDER, Mood.SEEK_FOOD, Mood.PLAY, Mood.CURIOUS, Mood.APPROACH, Mood.CHASE, Mood.FLEE, Mood.DANCE, Mood.HUG)
+        val FAST = setOf(Mood.SEEK_FOOD, Mood.PLAY, Mood.CHASE, Mood.FLEE)
+        val SLEEP_SPOTS = setOf(FurnitureKind.BED, FurnitureKind.RUG, FurnitureKind.TENT, FurnitureKind.DOGHOUSE, FurnitureKind.CASTLE, FurnitureKind.ROCK, FurnitureKind.CHEST, FurnitureKind.SHELL)
+        val TALK = listOf("♪", "!", "?", "…", "♥", "☆", "🍙", "⚽", "🌸", "☀", "🌙", "💤", "🍰", "🎵", "😂", "😳", "✨", "🐟", "👀")
+
         fun angleDiff(from: Float, to: Float): Float {
             var d = (to - from) % (2 * PI.toFloat())
             if (d > PI) d -= 2 * PI.toFloat()

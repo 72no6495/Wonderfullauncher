@@ -35,6 +35,7 @@ private val INK = Color(0xFF212121)
 fun DrawScope.drawCritterHead(
     cx: Float, cy: Float, size: Float, icon: ImageBitmap?, fallback: Color, look: PetLook,
     blink: Float, sleeping: Boolean, joy: Float, gaze: Offset, t: Float, unit: Float, seed: Int,
+    emote: Emote = Emote.NONE,
 ) {
     if (icon != null) image(icon, cx, cy, size, size, alpha = if (sleeping) 0.88f else 1f)
     else drawRoundRect(fallback, Offset(cx - size / 2, cy - size / 2), Size(size, size), CornerRadius(size * 0.25f))
@@ -46,16 +47,80 @@ fun DrawScope.drawCritterHead(
     }
     // 帽子などは目より奥（耳・ヘッドホン）と手前に分けて描く
     drawAccessory(look.accessory, cx, cy, size, t, unit, seed, behind = true)
-    drawEyePair(look.eyes, Offset(cx, cy - size * 0.43f), r, gaze, blink, sleeping, joy, t, unit)
+    val eyeC = Offset(cx, cy - size * 0.43f)
+    val eyes = expressiveEyes(look.eyes, emote)
+    drawEyePair(eyes, eyeC, r, gaze, blink, sleeping, joy, t, unit, scale = if (emote == Emote.SURPRISED) 1.35f else 1f)
+    if (!sleeping) drawExpression(emote, eyeC, r, cx, cy, size, t, unit, pair = eyes != EyeStyle.CYCLOPS)
+    if (sleeping) drawNoseBubble(Offset(cx + r * 0.55f, cy + r * 0.05f), r, t, unit, seed)
     drawAccessory(look.accessory, cx, cy, size, t, unit, seed, behind = false)
+}
+
+/** 気持ちによって目を変える（サングラスやクモの目はそのまま） */
+fun expressiveEyes(base: EyeStyle, emote: Emote): EyeStyle {
+    if (base == EyeStyle.SHADES || base == EyeStyle.SPIDER) return base
+    return when (emote) {
+        Emote.LOVE -> EyeStyle.HEART
+        Emote.HAPPY, Emote.YUMMY, Emote.MUSIC -> if (base == EyeStyle.CYCLOPS) base else EyeStyle.SMILE
+        Emote.SLEEPY -> EyeStyle.SLEEPY
+        Emote.SURPRISED -> if (base == EyeStyle.CYCLOPS) base else EyeStyle.GOOGLY
+        else -> base
+    }
+}
+
+/** 表情の足し算（おこ眉・なみだ・汗） */
+fun DrawScope.drawExpression(emote: Emote, eyeC: Offset, r: Float, cx: Float, cy: Float, size: Float, t: Float, unit: Float, pair: Boolean) {
+    val er = r * 0.22f
+    val sides = if (pair) intArrayOf(-1, 1) else intArrayOf(1)
+    when (emote) {
+        Emote.ANGRY -> sides.forEach { side ->
+            val ec = Offset(eyeC.x + (if (pair) side * r * 0.3f else 0f), eyeC.y)
+            drawLine(INK, Offset(ec.x + side * er * 1.1f, ec.y - er * 1.6f), Offset(ec.x - side * er * 0.9f, ec.y - er * 0.95f), unit * 3f, StrokeCap.Round)
+        }
+        Emote.SAD, Emote.HUNGRY -> sides.forEach { side ->
+            val ec = Offset(eyeC.x + (if (pair) side * r * 0.3f else 0f), eyeC.y)
+            drawLine(INK, Offset(ec.x + side * er * 1.1f, ec.y - er * 1.0f), Offset(ec.x - side * er * 0.8f, ec.y - er * 1.6f), unit * 2.5f, StrokeCap.Round)
+            if (emote == Emote.SAD) {
+                // なみだ
+                val k = (t * 1.4f + side * 0.37f).let { it - kotlin.math.floor(it) }
+                val d = Offset(ec.x + side * er * 0.5f, ec.y + er * 0.9f + k * r * 0.9f)
+                drawPath(drop(d, er * 0.38f), Color(0xFF64B5F6).copy(alpha = 1f - k))
+            }
+        }
+        Emote.SWEAT -> {
+            val k = (t * 0.8f).let { it - kotlin.math.floor(it) }
+            val d = Offset(cx + size * 0.42f, cy - size * 0.38f + k * size * 0.25f)
+            drawPath(drop(d, size * 0.07f), Color(0xFF81D4FA).copy(alpha = 1f - k * 0.6f))
+            drawPath(drop(d, size * 0.07f), Color(0xFF0277BD).copy(alpha = 0.6f), style = Stroke(unit))
+        }
+        else -> Unit
+    }
+}
+
+/** しずく形 */
+private fun drop(c: Offset, s: Float): Path = Path().apply {
+    moveTo(c.x, c.y - s * 1.6f)
+    cubicTo(c.x + s * 0.2f, c.y - s * 0.8f, c.x + s, c.y - s * 0.3f, c.x + s, c.y + s * 0.2f)
+    cubicTo(c.x + s, c.y + s * 0.8f, c.x - s, c.y + s * 0.8f, c.x - s, c.y + s * 0.2f)
+    cubicTo(c.x - s, c.y - s * 0.3f, c.x - s * 0.2f, c.y - s * 0.8f, c.x, c.y - s * 1.6f)
+    close()
+}
+
+/** 寝ている時の鼻ちょうちん */
+fun DrawScope.drawNoseBubble(c: Offset, r: Float, t: Float, unit: Float, seed: Int) {
+    val k = 0.5f + 0.5f * sin(t * 1.6f + seed % 7)
+    val br = r * (0.1f + 0.22f * k)
+    val o = Offset(c.x + br * 0.6f, c.y)
+    drawCircle(Color(0xFFB3E5FC).copy(alpha = 0.55f), br, o)
+    drawCircle(Color.White.copy(alpha = 0.8f), br, o, style = Stroke(unit * 1.2f))
+    drawCircle(Color.White.copy(alpha = 0.9f), br * 0.25f, Offset(o.x - br * 0.35f, o.y - br * 0.35f))
 }
 
 // ─────────────────────────────────────────────
 // 目
 // ─────────────────────────────────────────────
 
-fun DrawScope.drawEyePair(style: EyeStyle, c: Offset, r: Float, gaze: Offset, blink: Float, sleeping: Boolean, joy: Float, t: Float, unit: Float) {
-    val er = r * 0.22f
+fun DrawScope.drawEyePair(style: EyeStyle, c: Offset, r: Float, gaze: Offset, blink: Float, sleeping: Boolean, joy: Float, t: Float, unit: Float, scale: Float = 1f) {
+    val er = r * 0.22f * scale
     when (style) {
         EyeStyle.CYCLOPS -> drawEye(EyeStyle.GOOGLY, Offset(c.x, c.y - er * 0.2f), er * 1.7f, 1, gaze, blink, sleeping, joy, t, unit)
         EyeStyle.SPIDER -> drawSpiderEyes(c, r, gaze, blink, sleeping, unit)

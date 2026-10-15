@@ -115,6 +115,8 @@ import com.wonderful.launcher.ui.theme.LocalRetroFont
 import com.wonderful.launcher.ui.theme.RetroPalette
 import com.wonderful.launcher.ui.theme.RetroTheme
 import kotlin.random.Random
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /*
  * 飼育モード（スマホを横に持った時だけ表示）。
@@ -212,6 +214,17 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
         sim.hungerSeconds = cfg.hungerHours * 3600f
         sim.changeLegPairs(cfg.legPairs)
         sim.setAquarium(theme == PetTheme.AQUARIUM)
+        sim.socialEnabled = cfg.social
+    }
+
+    // 効果音（飼育モードの間だけ用意する）
+    val sound = remember { PetSound(context) }
+    LaunchedEffect(sound) { withContext(Dispatchers.IO) { sound.load() } }
+    DisposableEffect(sound) { onDispose { sound.release() } }
+    val cfgNow by rememberUpdatedState(cfg)
+    fun playSounds(events: List<SoundEvent>) {
+        val c = cfgNow
+        if (c.sound) sound.play(events, sim.right, c.soundVolume, c.soundRespectSilent)
     }
 
     // 飼っている子・家具を計算に反映（離れていた間はお腹が減る）
@@ -254,6 +267,10 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
             withFrameNanos { now ->
                 if (last != 0L && gate.add((now - last) / 1e9f, cfg.fps)) {
                     sim.step(gate.consume())
+                    if (sim.sounds.isNotEmpty()) {
+                        playSounds(sim.sounds.toList())
+                        sim.sounds.clear()
+                    }
                     frame++
                 }
                 last = now
@@ -311,9 +328,11 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                                     // 長押しでアプリを起動
                                     if (hapticNow) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                     pet.joy = 1f
+                                    playSounds(listOf(SoundEvent(Sfx.LAUNCH, pet.x, pet.voice, 1f)))
                                     appMapNow[pet.key]?.let { vm.launch(it) }
                                 } else if (fur != null && toolNow == Tool.FURNITURE) {
                                     if (hapticNow) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    sim.sfx(Sfx.REMOVE, fur.x)
                                     vm.removeFurniture(fur.id)
                                 }
                                 waitForUpOrCancellation()
@@ -327,6 +346,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                                         val d = kotlin.math.hypot(dx, dy).coerceAtLeast(1f)
                                         fur.vx = dx / d * sim.radius * 8f
                                         fur.vy = dy / d * sim.radius * 8f
+                                        sim.sfx(Sfx.KICK, fur.x)
                                     }
                                     else -> sim.call(start.x, start.y)
                                 }
@@ -343,6 +363,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                                         else -> {
                                             val (fx, fy) = fraction(start.x, start.y)
                                             vm.addFurniture(k, fx, fy, roomNow)
+                                            sim.sfx(Sfx.PLACE, start.x, 0.9f + Random.nextFloat() * 0.2f)
                                             if (hapticNow) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                                         }
                                     }
@@ -399,6 +420,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                                     if (toolNow == Tool.FURNITURE || movingFur.kind != FurnitureKind.BALL) {
                                         val (fx, fy) = fraction(movingFur.x, movingFur.y)
                                         vm.moveFurniture(movingFur.id, fx, fy)
+                                        sim.sfx(Sfx.PLACE, movingFur.x, 1.2f, 0.6f)
                                     }
                                 }
                             }
@@ -438,10 +460,11 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                     drawCircle(colors.accent.copy(alpha = 0.6f), sim.furnitureRadius(f.kind) * 1.25f, Offset(f.x, f.y), style = androidx.compose.ui.graphics.drawscope.Stroke(unit * 1.5f))
                 }
             }
-            drawParticles(sim, colors, emoji, unit)
+            drawParticles(sim, colors, emoji, unit, labelPaint)
             sim.pets.forEach { p ->
                 drawPetLabel(p, sim, appMap[p.key]?.label ?: "", cfg.showNames, colors, labelPaint, emoji, unit)
             }
+            if (cfg.emotes) sim.pets.forEach { drawEmoteBalloon(it, sim, emoji, colors, unit) }
         }
 
         // ── 右側の道具 ──
@@ -762,6 +785,13 @@ fun PetSettingsContent(s: LauncherSettings, vm: LauncherViewModel, inPetMode: Bo
     ChoiceSetting("足の色", LegColor.entries, cfg.legColor, { it.label }) { v -> u { it.copy(legColor = v) } }
     SwitchSetting("名前を表示", cfg.showNames) { v -> u { it.copy(showNames = v) } }
     SwitchSetting("振動", cfg.haptic, "なでた時・長押しした時") { v -> u { it.copy(haptic = v) } }
+    SectionHeader("音")
+    SwitchSetting("効果音", cfg.sound, "なでた時・ごはん・おしゃべり・いびき など") { v -> u { it.copy(sound = v) } }
+    SliderSetting("音量", cfg.soundVolume, 0f..1f, format = { "${(it * 100).toInt()}%" }) { v -> u { it.copy(soundVolume = v) } }
+    SwitchSetting("マナーモード中は鳴らさない", cfg.soundRespectSilent) { v -> u { it.copy(soundRespectSilent = v) } }
+    SectionHeader("ふるまい")
+    SwitchSetting("仲間どうしで遊ぶ", cfg.social, "おしゃべり・おにごっこ・ダンス・ハグ・あいさつ") { v -> u { it.copy(social = v) } }
+    SwitchSetting("気持ちを吹き出しで出す", cfg.emotes, "うれしい・好き・おこ・びっくり・ねむい など") { v -> u { it.copy(emotes = v) } }
     SectionHeader("お世話")
     SliderSetting("お腹が空くまでの時間", cfg.hungerHours, 0.5f..48f, "お腹いっぱいからペコペコになるまで。アプリを閉じている間も減ります", format = { "%.1f時間".format(it) }) { v -> u { it.copy(hungerHours = v) } }
     SectionHeader("軽量化")
