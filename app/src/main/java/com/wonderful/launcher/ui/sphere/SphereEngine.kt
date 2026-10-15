@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2026 72no6495
+
 package com.wonderful.launcher.ui.sphere
 
 import com.wonderful.launcher.data.LauncherSettings

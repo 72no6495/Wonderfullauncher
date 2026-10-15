@@ -1,5 +1,10 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2026 72no6495
+
 package com.wonderful.launcher.ui.settings
 
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -925,6 +930,19 @@ private fun AboutTab(data: LauncherData, apps: List<AppInfo>) {
     InfoSetting("非表示のアプリ", "${data.hiddenApps.size}")
     InfoSetting("フォルダ", "${data.folders.size}")
     InfoSetting("累計起動回数", "${data.launchCounts.values.sum()}")
+    SectionHeader("ライセンス")
+    InfoSetting("ライセンス", "PolyForm Noncommercial 1.0.0")
+    InfoSetting("著作権", "© 2026 72no6495")
+    RetroLabel(
+        "個人での利用・学習・趣味での改造・非営利での再配布は自由です。営利目的での利用（販売・広告収入・業務利用など）はできません。",
+        size = 12.sp, color = p.text.copy(alpha = 0.75f), maxLines = 4,
+    )
+    ActionSetting("ライセンスの全文を見る", "OPEN") {
+        SystemActions.safeStart(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://polyformproject.org/licenses/noncommercial/1.0.0")))
+    }
+    ActionSetting("ソースコード", "GITHUB") {
+        SystemActions.safeStart(context, Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/72no6495/Wonderfullauncher")))
+    }
     Spacer(Modifier.height(16.dp))
     RetroLabel("ＡＥＳＴＨＥＴＩＣ　ｆｏｒ　ｙｏｕｒ　ｐｈｏｎｅ", color = p.cyan, size = 12.sp, maxLines = 2)
 }

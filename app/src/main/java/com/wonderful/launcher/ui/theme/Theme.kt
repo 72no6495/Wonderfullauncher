@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+// Copyright (c) 2026 72no6495
+
 package com.wonderful.launcher.ui.theme
 
 import androidx.compose.material3.MaterialTheme
