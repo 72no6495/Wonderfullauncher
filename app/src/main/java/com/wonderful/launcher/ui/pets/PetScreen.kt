@@ -1214,5 +1214,5 @@ fun widgetSizePx(item: com.wonderful.launcher.data.FurnitureItem, density: Float
 /** 上に乗って遊ぶ家具 */
 private val ON_TOP = setOf(
     FurnitureKind.BED, FurnitureKind.SOFA, FurnitureKind.RUG, FurnitureKind.TOWER, FurnitureKind.STUMP,
-    FurnitureKind.MUSHROOM, FurnitureKind.ROCK, FurnitureKind.BLOODCELL, FurnitureKind.CELL,
+    FurnitureKind.MUSHROOM, FurnitureKind.ROCK, FurnitureKind.BLOODCELL, FurnitureKind.CELL, FurnitureKind.TUMOR,
 )
