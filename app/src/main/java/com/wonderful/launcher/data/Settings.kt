@@ -376,6 +376,14 @@ enum class PetTheme(val label: String) {
     VAPOR("ヴェイパー"),
     AQUARIUM("アクアリウム"),
     MEADOW("野原"),
+    /** 体の中。アプリが微生物の姿になって大腸菌を食べる */
+    BODY("体内"),
+}
+
+/** 体内テーマでの姿 */
+enum class MicrobeStyle(val label: String) {
+    PHAGE("T2ファージ"),
+    MACROPHAGE("マクロファージ"),
 }
 
 /** 目の種類。MIXED は「1 体ずつバラバラ」 */
@@ -430,7 +438,7 @@ enum class LegColor(val label: String) {
 }
 
 /** 置ける家具。※ 保存データに名前で入るので、名前の変更・削除はしないこと */
-enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boolean = false, val outdoor: Boolean = false) {
+enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boolean = false, val outdoor: Boolean = false, val body: Boolean = false) {
     BED("ベッド", "🛏"),
     SOFA("ソファ", "🛋"),
     BALL("ボール", "⚽"),
@@ -454,6 +462,10 @@ enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boo
     TENT("テント", "⛺", outdoor = true),
     SUNFLOWER("ひまわり", "🌻", outdoor = true),
     DOGHOUSE("小屋", "🛖", outdoor = true),
+    BLOODCELL("赤血球", "🔴", body = true),
+    CELL("細胞", "🧫", body = true),
+    DNA("DNA", "🧬", body = true),
+    CAPSULE("カプセル", "💊", body = true),
     /** 好きな写真（写真立て） */
     PHOTO("写真", "🖼"),
     /** 好きなウィジェット */
@@ -464,7 +476,8 @@ enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boo
 fun FurnitureKind.availableIn(room: PetTheme): Boolean = this == FurnitureKind.PHOTO || this == FurnitureKind.WIDGET || when (room) {
     PetTheme.AQUARIUM -> aquarium || this == FurnitureKind.BALL
     PetTheme.MEADOW -> outdoor || this in setOf(FurnitureKind.BALL, FurnitureKind.BOWL, FurnitureKind.RUG, FurnitureKind.ROCK, FurnitureKind.PALM)
-    PetTheme.CASUAL, PetTheme.VAPOR -> !aquarium && !outdoor
+    PetTheme.BODY -> body || this in setOf(FurnitureKind.BALL, FurnitureKind.BOWL)
+    PetTheme.CASUAL, PetTheme.VAPOR -> !aquarium && !outdoor && !body
 }
 
 @Serializable
@@ -500,6 +513,10 @@ data class PetConfig(
     val social: Boolean = true,
     /** 気持ちを吹き出しで出す */
     val emotes: Boolean = true,
+    /** 体内テーマでの姿 */
+    val microbe: MicrobeStyle = MicrobeStyle.PHAGE,
+    /** 体内テーマで大腸菌が自然にわく */
+    val autoBacteria: Boolean = true,
 )
 
 /** 飼っているアプリ 1 体 */

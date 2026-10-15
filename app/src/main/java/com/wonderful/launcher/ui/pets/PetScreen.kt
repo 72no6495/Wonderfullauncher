@@ -87,6 +87,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wonderful.launcher.data.Accessory
+import com.wonderful.launcher.data.MicrobeStyle
 import com.wonderful.launcher.data.WidgetTarget
 import com.wonderful.launcher.ui.panels.AddSystemWidget
 import com.wonderful.launcher.ui.panels.WidgetChooser
@@ -160,6 +161,11 @@ fun petUiPalette(theme: PetTheme, base: RetroPalette): RetroPalette = when (them
         yellow = Color(0xFFF9A825), mint = Color(0xFF2E7D32), panel = Color(0xFFF9FFF0), text = Color(0xFF33691E),
         titleStart = Color(0xFF7CB342), titleEnd = Color(0xFFFFCA28),
     )
+    PetTheme.BODY -> base.copy(
+        pink = Color(0xFFFF5C8A), cyan = Color(0xFF80DEEA), purple = Color(0xFFCE93D8),
+        yellow = Color(0xFFFFE082), mint = Color(0xFFA5D6A7), panel = Color(0xFF2A0A12), text = Color(0xFFFFE4EC),
+        titleStart = Color(0xFFFF5C8A), titleEnd = Color(0xFFCE93D8),
+    )
     PetTheme.AQUARIUM -> base.copy(
         pink = Color(0xFFFF8A65), cyan = Color(0xFF4DD0E1), purple = Color(0xFF4FC3F7),
         yellow = Color(0xFFFFF59D), mint = Color(0xFF80CBC4), panel = Color(0xFF06324A), text = Color(0xFFE0F7FA),
@@ -171,6 +177,7 @@ fun petUiPalette(theme: PetTheme, base: RetroPalette): RetroPalette = when (them
 fun roomOf(theme: PetTheme): PetTheme = when (theme) {
     PetTheme.AQUARIUM -> PetTheme.AQUARIUM
     PetTheme.MEADOW -> PetTheme.MEADOW
+    PetTheme.BODY -> PetTheme.BODY
     PetTheme.CASUAL, PetTheme.VAPOR -> PetTheme.CASUAL
 }
 
@@ -257,8 +264,13 @@ private fun PetRoom(
         sim.radius = radiusPx
         sim.speedFactor = cfg.speed
         sim.hungerSeconds = cfg.hungerHours * 3600f
-        sim.changeLegPairs(cfg.legPairs)
+        if (theme != PetTheme.BODY) sim.changeLegPairs(cfg.legPairs)
         sim.setAquarium(theme == PetTheme.AQUARIUM)
+        sim.setBodyMode(theme == PetTheme.BODY)
+        sim.legless = theme == PetTheme.BODY && cfg.microbe == MicrobeStyle.MACROPHAGE
+        sim.autoFood = theme == PetTheme.BODY && cfg.autoBacteria
+        // T2 ファージの尾繊維は 6 本
+        if (theme == PetTheme.BODY && cfg.microbe == MicrobeStyle.PHAGE) sim.changeLegPairs(3)
         sim.socialEnabled = cfg.social
     }
 
@@ -516,11 +528,18 @@ private fun PetRoom(
                 sim.furniture.filter { it.kind == FurnitureKind.RUG }.forEach { drawFurniture(it, sim, theme, colors, base, emoji, t, unit, it.id == selectedId, photos) }
                 val items = ArrayList<Pair<Float, () -> Unit>>()
                 sim.furniture.filter { it.kind != FurnitureKind.RUG }.forEach { f -> items += f.y to { drawFurniture(f, sim, theme, colors, base, emoji, t, unit, f.id == selectedId, photos) } }
-                sim.food.forEach { f -> items += f.y to { drawFood(f, sim, unit) } }
+                sim.food.forEach { f -> items += f.y to { if (theme == PetTheme.BODY) drawEColi(f, sim, t, unit) else drawFood(f, sim, unit) } }
                 sim.pets.forEach { p ->
                     val icon = icons[p.key]
                     val tint = tints.getOrPut(p.key) { iconTint(icon) }
-                    items += (p.y + p.lift * sim.radius * 3f) to { drawSpider(p, sim, icon, tint, looks[p.key] ?: cfg.lookFor(null, p.key), colors, theme, t, unit) }
+                    val look = looks[p.key] ?: cfg.lookFor(null, p.key)
+                    items += (p.y + p.lift * sim.radius * 3f) to {
+                        when {
+                            theme != PetTheme.BODY -> drawSpider(p, sim, icon, tint, look, colors, theme, t, unit)
+                            cfg.microbe == MicrobeStyle.PHAGE -> drawPhage(p, sim, icon, tint, look, colors, t, unit)
+                            else -> drawMacrophage(p, sim, icon, tint, look, colors, t, unit)
+                        }
+                    }
                 }
                 items.sortBy { it.first }
                 items.forEach { it.second() }
@@ -664,7 +683,8 @@ private fun PetRoom(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Tool.entries.forEach { t ->
-                ToolButton(theme, t.emoji, t.label, tool == t) {
+                val (em, lb) = if (t == Tool.FOOD && theme == PetTheme.BODY) "🦠" to "大腸菌" else t.emoji to t.label
+                ToolButton(theme, em, lb, tool == t) {
                     tool = t
                     if (t != Tool.FURNITURE) placeKind = null
                     haptic()
@@ -689,6 +709,7 @@ private fun PetRoom(
                     when (theme) {
                         PetTheme.AQUARIUM -> "🐠 アプリ水族館"
                         PetTheme.MEADOW -> "🌼 アプリ牧場"
+                        PetTheme.BODY -> if (cfg.microbe == MicrobeStyle.PHAGE) "🦠 アプリ体内（T2ファージ）" else "🦠 アプリ体内（マクロファージ）"
                         else -> "🕷 アプリ飼育"
                     } + "  ${pets.size}/$MAX_PETS",
                     size = 13.sp, weight = FontWeight.Bold, color = ui.text,
@@ -696,7 +717,7 @@ private fun PetRoom(
             }
             val hint = when (tool) {
                 Tool.PAT -> "タップ・なぞってなでる / 長押しで起動 / ドラッグで運ぶ"
-                Tool.FOOD -> "タップした所にエサ（なぞるとばらまく）"
+                Tool.FOOD -> if (theme == PetTheme.BODY) "タップした所に大腸菌を放す（逃げ回るので追いかけて食べます）" else "タップした所にエサ（なぞるとばらまく）"
                 Tool.FURNITURE -> "下から選んでタップで置く / 家具をタップで大きさ変更 / ドラッグで移動 / 長押しで片付け"
             }
             Pill(theme, alpha = 0.75f) { RetroLabel(hint, size = 11.sp, color = ui.text) }
@@ -741,7 +762,7 @@ private fun PetRoom(
         if (pets.isEmpty() && sheet == Sheet.NONE) {
             Card(theme, Modifier.align(Alignment.Center).widthIn(max = 420.dp)) {
                 Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    RetroLabel(if (theme == PetTheme.AQUARIUM) "🐠" else if (theme == PetTheme.MEADOW) "🌼" else "🕷", size = 40.sp)
+                    RetroLabel(when (theme) { PetTheme.AQUARIUM -> "🐠"; PetTheme.MEADOW -> "🌼"; PetTheme.BODY -> "🦠"; else -> "🕷" }, size = 40.sp)
                     Spacer(Modifier.height(6.dp))
                     RetroLabel("まだアプリを飼っていません", size = 17.sp, weight = FontWeight.Bold, color = ui.text)
                     RetroLabel("好きなアプリを最大 $MAX_PETS 体まで放し飼いにできます", size = 12.sp, color = ui.text.copy(alpha = 0.7f))
@@ -973,7 +994,9 @@ fun PetSettingsContent(s: LauncherSettings, vm: LauncherViewModel, inPetMode: Bo
         "スマホを横に持つと飼育モード、縦に戻すと通常のホーム。縦持ちの間はこの機能は完全に止まります",
     ) { v -> u { it.copy(enabled = v) } }
     SwitchSetting("回転ロック中でも横向きにする", cfg.ignoreRotationLock, "OFF の時は、画面の自動回転がオンの時だけ切り替わります") { v -> u { it.copy(ignoreRotationLock = v) } }
-    ChoiceSetting("テーマ", PetTheme.entries, cfg.theme, { it.label }, "アクアリウムではアプリが魚になって泳ぎます") { v -> u { it.copy(theme = v) } }
+    ChoiceSetting("テーマ", PetTheme.entries, cfg.theme, { it.label }, "アクアリウムではアプリが魚に、体内では微生物になって大腸菌を食べます") { v -> u { it.copy(theme = v) } }
+    ChoiceSetting("体内での姿", MicrobeStyle.entries, cfg.microbe, { it.label }, "T2ファージは尾繊維で歩いて大腸菌に感染、マクロファージは仮足で包み込んで食べます") { v -> u { it.copy(microbe = v) } }
+    SwitchSetting("体内で大腸菌が自然にわく", cfg.autoBacteria) { v -> u { it.copy(autoBacteria = v) } }
     SectionHeader("動き・見た目")
     SliderSetting("動く速さ", cfg.speed, 0.3f..2.5f, format = { "%.1f倍".format(it) }) { v -> u { it.copy(speed = v) } }
     SliderSetting("大きさ", cfg.scale, 0.6f..1.8f, format = { "%.1f倍".format(it) }) { v -> u { it.copy(scale = v) } }
@@ -1014,7 +1037,7 @@ fun PetSettingsContent(s: LauncherSettings, vm: LauncherViewModel, inPetMode: Bo
 private fun cardShape(theme: PetTheme): Shape = when (theme) {
     PetTheme.CASUAL, PetTheme.MEADOW -> RoundedCornerShape(22.dp)
     PetTheme.VAPOR -> RoundedCornerShape(6.dp)
-    PetTheme.AQUARIUM -> RoundedCornerShape(18.dp)
+    PetTheme.AQUARIUM, PetTheme.BODY -> RoundedCornerShape(18.dp)
 }
 
 @Composable
@@ -1026,6 +1049,7 @@ private fun Card(theme: PetTheme, modifier: Modifier = Modifier, content: @Compo
         PetTheme.MEADOW -> Triple(Color(0xFFF9FFF0), Color(0xFFC5E1A5), 8.dp)
         PetTheme.VAPOR -> Triple(ui.panel.copy(alpha = 0.94f), ui.pink, 0.dp)
         PetTheme.AQUARIUM -> Triple(Color(0xE606324A), Color(0x88B2EBF2), 0.dp)
+        PetTheme.BODY -> Triple(Color(0xE62A0A12), Color(0x88FF8A80), 0.dp)
     }
     Column(
         modifier
@@ -1044,6 +1068,7 @@ private fun Pill(theme: PetTheme, alpha: Float = 1f, content: @Composable () -> 
         PetTheme.CASUAL, PetTheme.MEADOW -> Color.White
         PetTheme.VAPOR -> ui.panel
         PetTheme.AQUARIUM -> Color(0xFF06324A)
+        PetTheme.BODY -> Color(0xFF2A0A12)
     }
     Box(
         Modifier
@@ -1060,19 +1085,21 @@ private fun ToolButton(theme: PetTheme, emoji: String, label: String, selected: 
     val shape = when (theme) {
         PetTheme.CASUAL, PetTheme.MEADOW -> RoundedCornerShape(20.dp)
         PetTheme.VAPOR -> RoundedCornerShape(4.dp)
-        PetTheme.AQUARIUM -> RoundedCornerShape(50)
+        PetTheme.AQUARIUM, PetTheme.BODY -> RoundedCornerShape(50)
     }
     val bg = when (theme) {
         PetTheme.CASUAL -> if (selected) Color(0xFFFFE0B2) else Color.White
         PetTheme.MEADOW -> if (selected) Color(0xFFDCEDC8) else Color.White
         PetTheme.VAPOR -> if (selected) ui.pink.copy(alpha = 0.45f) else ui.panel.copy(alpha = 0.85f)
         PetTheme.AQUARIUM -> if (selected) Color(0xCC26C6DA) else Color(0x9906324A)
+        PetTheme.BODY -> if (selected) Color(0xCCFF5C8A) else Color(0x992A0A12)
     }
     val border = if (selected) ui.pink else when (theme) {
         PetTheme.CASUAL -> Color(0xFFFFCCBC)
         PetTheme.MEADOW -> Color(0xFFC5E1A5)
         PetTheme.VAPOR -> ui.cyan.copy(alpha = 0.6f)
         PetTheme.AQUARIUM -> Color(0x88B2EBF2)
+        PetTheme.BODY -> Color(0x88FF8A80)
     }
     Column(
         Modifier

@@ -67,6 +67,10 @@ fun petColors(theme: PetTheme, p: RetroPalette): PetColors = when (theme) {
         leg = Color(0xFF4E342E), legGlow = null, joint = Color(0xFF3E2723), shadow = Color(0x33203010),
         nameBg = Color(0xE6FFFFFF), nameText = Color(0xFF33691E), accent = Color(0xFFFF7043), accent2 = Color(0xFF29B6F6),
     )
+    PetTheme.BODY -> PetColors(
+        leg = Color(0xFFE0F7FA), legGlow = null, joint = Color(0xFF4A0E1C), shadow = Color(0x44200008),
+        nameBg = Color(0xCC3A0A14), nameText = Color(0xFFFFE4EC), accent = Color(0xFFFF5C8A), accent2 = Color(0xFF80DEEA),
+    )
     PetTheme.AQUARIUM -> PetColors(
         leg = Color.White, legGlow = null, joint = Color.White, shadow = Color(0x33001A2A),
         nameBg = Color(0x99003A55), nameText = Color(0xFFE0F7FA), accent = Color(0xFFFF8A65), accent2 = Color(0xFF4DD0E1),
@@ -177,6 +181,7 @@ fun DrawScope.drawPetBackground(theme: PetTheme, p: RetroPalette, sim: PetSim, t
             while (sy < h) { drawLine(Color.Black.copy(alpha = 0.12f), Offset(0f, sy), Offset(w, sy), 1f); sy += unit * 4f }
         }
         PetTheme.MEADOW -> drawMeadow(t, unit)
+        PetTheme.BODY -> drawBodyBackground(t, unit)
         PetTheme.AQUARIUM -> {
             val floor = sim.floorY
             drawRect(Brush.verticalGradient(listOf(Color(0xFF1386A8), Color(0xFF0A4F70), Color(0xFF032A40)), 0f, floor))
@@ -359,6 +364,7 @@ fun DrawScope.drawFurniture(
         PetTheme.VAPOR -> drawCircle(Brush.radialGradient(listOf(p.cyan.copy(alpha = 0.35f), Color.Transparent), c, r * 1.4f), r * 1.4f, c)
         PetTheme.CASUAL, PetTheme.MEADOW -> if (f.kind != FurnitureKind.RUG) drawOval(colors.shadow, Offset(f.x - r * 0.9f, f.y + r * 0.45f), Size(r * 1.8f, r * 0.55f))
         PetTheme.AQUARIUM -> drawOval(Color(0x33002233), Offset(f.x - r * 0.9f, f.y + r * 0.5f), Size(r * 1.8f, r * 0.4f))
+        PetTheme.BODY -> drawCircle(Brush.radialGradient(listOf(Color(0x55FFCDD2), Color.Transparent), c, r * 1.5f), r * 1.5f, c)
     }
     when (f.kind) {
         FurnitureKind.RUG -> if (theme == PetTheme.MEADOW) {
@@ -402,6 +408,7 @@ fun DrawScope.drawFurniture(
                 drawPath(path, Color(0xFF66BB6A), style = Stroke(r * 0.12f, cap = StrokeCap.Round))
             }
         }
+        FurnitureKind.BLOODCELL -> drawBloodCell(Offset(f.x, f.y + sin(t * 1.5f + f.fx) * unit * 2f), r, unit)
         FurnitureKind.BALL -> {
             val img = emoji.get(f.kind.emoji, (r * 2.2f).toInt())
             rotate(f.spin * 57.3f, c) { image(img, f.x, f.y, r * 2.2f, r * 2.2f) }
@@ -455,6 +462,8 @@ private fun DrawScope.drawPhotoFrame(
             }
             PetTheme.MEADOW -> drawRect(Color(0xFFFFFDF7), outer, outerSize)
             PetTheme.AQUARIUM -> drawRoundRect(Color(0x66B2EBF2), outer, outerSize, CornerRadius(r * 0.3f))
+            // 体内：細胞膜のようなぷるぷるの枠
+            PetTheme.BODY -> drawRoundRect(Color(0xCCF8BBD0), outer, outerSize, CornerRadius(r * 0.35f))
         }
         val clip = Path().apply {
             addRoundRect(androidx.compose.ui.geometry.RoundRect(tl.x, tl.y, tl.x + w, tl.y + h, CornerRadius(if (theme == PetTheme.AQUARIUM) r * 0.25f else unit * 2f)))
@@ -486,6 +495,7 @@ private fun DrawScope.drawPhotoFrame(
                 drawRoundRect(Color.White.copy(alpha = 0.7f), outer, outerSize, CornerRadius(r * 0.3f), style = Stroke(unit * 2f))
                 drawCircle(Color.White.copy(alpha = 0.5f), r * 0.08f, Offset(outer.x + r * 0.2f, outer.y + r * 0.2f), style = Stroke(unit))
             }
+            PetTheme.BODY -> drawRoundRect(Color(0xFFAD1457), outer, outerSize, CornerRadius(r * 0.35f), style = Stroke(unit * 2f))
             PetTheme.CASUAL -> Unit
         }
         if (selected) drawRoundRect(colors.accent, outer - Offset(unit * 6f, unit * 6f), Size(outerSize.width + unit * 12f, outerSize.height + unit * 12f), CornerRadius(unit * 10f), style = Stroke(unit * 3f))
@@ -703,6 +713,7 @@ fun DrawScope.drawParticles(sim: PetSim, colors: PetColors, emoji: EmojiCache, u
             }
             FxKind.CRUMB -> drawCircle(Color(0xFFA0522D).copy(alpha = fade), r * 0.06f * q.size, Offset(q.x, q.y))
             FxKind.SPARK -> drawCircle(colors.accent.copy(alpha = fade * 0.8f), r * (0.2f + q.t * 1.2f), Offset(q.x, q.y), style = Stroke(unit * 2f * fade + 0.5f))
+            FxKind.PHAGELET -> drawPhagelet(q, r, unit)
             FxKind.SPEECH -> {
                 // おしゃべりの吹き出し
                 val pop = min(1f, q.t * 8f)

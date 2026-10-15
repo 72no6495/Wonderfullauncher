@@ -45,7 +45,7 @@ enum class Sfx { PAT, EAT, DROP, LAUNCH, PICKUP, PLOP, PLACE, REMOVE, KICK, BUBB
 /** 鳴らしてほしい音（画面側でまとめて鳴らす）。[pitch] は 1 = そのまま */
 class SoundEvent(val sfx: Sfx, val x: Float, val pitch: Float, val volume: Float)
 
-enum class FxKind { HEART, ZZZ, CRUMB, BUBBLE, NOTE, SPARK, HUNGRY, SPEECH }
+enum class FxKind { HEART, ZZZ, CRUMB, BUBBLE, NOTE, SPARK, HUNGRY, SPEECH, PHAGELET }
 
 class Particle(
     val kind: FxKind,
@@ -63,6 +63,10 @@ class Particle(
 }
 
 class Food(val id: Int, var x: Float, var y: Float) {
+    /** 体内モードの大腸菌：泳ぐ速さ・向き・つかまっているか */
+    var vx = 0f
+    var heading = 0f
+    var captured = false
     var amount = 1f
     /** 落ちてくる高さ（部屋）/ 沈んでいる途中（水槽） */
     var drop = 1f
@@ -203,6 +207,14 @@ class PetSim(seed: Int = 7) {
     var awakeSeconds = 150f
     private var foodIds = 0
     private var foodCheck = 0f
+    /** 体内モード（エサが大腸菌になって泳ぐ） */
+    var bodyMode = false
+        private set
+    /** 足が無い（マクロファージ） */
+    var legless = false
+    /** 体内モードで大腸菌が自然にわく */
+    var autoFood = false
+    private var spawnTimer = 8f
     var time = 0f
         private set
 
@@ -222,6 +234,12 @@ class PetSim(seed: Int = 7) {
         aquarium = on
         food.clear()
         pets.forEach { it.mood = Mood.IDLE; it.moodTime = 0f; it.moodLength = 0.5f; resetLegs(it) }
+    }
+
+    fun setBodyMode(on: Boolean) {
+        if (on == bodyMode) return
+        bodyMode = on
+        food.clear()
     }
 
     fun changeLegPairs(n: Int) {
@@ -385,7 +403,11 @@ class PetSim(seed: Int = 7) {
     fun dropFood(x: Float, y: Float) {
         if (food.size >= 24) food.removeAt(0)
         val f = Food(foodIds++, x.coerceIn(left, right), y.coerceIn(top, if (aquarium) floorY else bottom))
-        if (aquarium) { f.drop = 0f; f.vy = 20f } else f.drop = 1f
+        when {
+            bodyMode -> { f.drop = 0f; f.landed = true; f.heading = rnd.range(0f, 2 * PI.toFloat()) }
+            aquarium -> { f.drop = 0f; f.vy = 20f }
+            else -> f.drop = 1f
+        }
         food += f
         sfx(Sfx.DROP, f.x, 0.9f + rnd.nextFloat() * 0.3f)
         // お腹が空いている子・近い子から向かう（お腹いっぱいでも、誰かは必ず食べに来る）
@@ -441,6 +463,10 @@ class PetSim(seed: Int = 7) {
     private fun stepFood(dt: Float) {
         food.forEach { f ->
             f.age += dt
+            if (bodyMode) {
+                stepBacterium(f, dt)
+                return@forEach
+            }
             if (aquarium) {
                 if (!f.landed) {
                     f.vy = min(f.vy + 30f * dt, 55f)
@@ -457,6 +483,21 @@ class PetSim(seed: Int = 7) {
             }
         }
         food.removeAll { it.amount <= 0f }
+        // 体内では大腸菌がときどき自然にわく
+        if (bodyMode && autoFood) {
+            spawnTimer -= dt
+            if (spawnTimer <= 0f) {
+                spawnTimer = rnd.range(12f, 24f)
+                if (food.size < 3) {
+                    // 画面の端から泳いでくる
+                    val side = rnd.nextInt(4)
+                    val x = if (side == 0) left + radius else if (side == 1) right - radius else rnd.range(left, right)
+                    val y = if (side == 2) top + radius else if (side == 3) bottom - radius else rnd.range(top, bottom)
+                    val f = Food(foodIds++, x, y).apply { drop = 0f; landed = true; heading = rnd.range(0f, 2 * PI.toFloat()) }
+                    food += f
+                }
+            }
+        }
         // 誰も向かっていないエサがあったら、手の空いている子を行かせる（残さず食べる）
         foodCheck -= dt
         if (foodCheck <= 0f && food.isNotEmpty() && pets.isNotEmpty()) {
@@ -474,6 +515,31 @@ class PetSim(seed: Int = 7) {
                 }
             }
         }
+    }
+
+    /** 大腸菌：のんびり泳ぎ、近くに来られると逃げる。つかまったら止まる */
+    private fun stepBacterium(f: Food, dt: Float) {
+        f.captured = pets.any { it.targetFood == f.id && it.mood == Mood.EAT }
+        if (f.captured) { f.vx *= 0.8f; f.vy *= 0.8f; return }
+        val threat = pets.filter { it.mood != Mood.SLEEP }.minByOrNull { hypot(it.x - f.x, it.y - f.y) }
+        val d = threat?.let { hypot(it.x - f.x, it.y - f.y) } ?: Float.MAX_VALUE
+        var want = f.heading + sin(f.age * 1.3f + f.id) * 0.8f * dt
+        var speed = radius * 0.45f
+        if (threat != null && d < radius * 3.2f) {
+            // 逃げる（でも捕まえられるくらいの速さ）
+            want = atan2(f.y - threat.y, f.x - threat.x)
+            speed = radius * 0.85f
+        }
+        f.heading += angleDiff(f.heading, want) * min(1f, dt * 3f)
+        f.vx += (cos(f.heading) * speed - f.vx) * min(1f, dt * 2f)
+        f.vy += (sin(f.heading) * speed - f.vy) * min(1f, dt * 2f)
+        f.x += f.vx * dt
+        f.y += f.vy * dt
+        val m = radius * 0.5f
+        if (f.x < left + m || f.x > right - m) { f.heading = PI.toFloat() - f.heading; f.x = f.x.coerceIn(left + m, right - m) }
+        if (f.y < top + m || f.y > bottom - m) { f.heading = -f.heading; f.y = f.y.coerceIn(top + m, bottom - m) }
+        val (ox, oy) = outOfSolids(f.x, f.y, m)
+        f.x = ox; f.y = oy
     }
 
     private fun stepFurniture(dt: Float) {
@@ -594,7 +660,7 @@ class PetSim(seed: Int = 7) {
         if (p.mood == Mood.IDLE) stepIdle(p, dt) else { p.idleAnim = IdleAnim.NONE; p.stretch *= 1f - min(1f, dt * 6f) }
         move(p, dt)
         updateGaze(p, dt)
-        if (!aquarium) updateLegs(p, dt)
+        if (!aquarium && !legless) updateLegs(p, dt)
         if (aquarium) {
             val want = when {
                 p.idleAnim == IdleAnim.SPIN -> if (sin(p.idleT / max(p.idleLength, 0.1f) * PI.toFloat() * 2f) > 0f) 1f else -1f
@@ -708,6 +774,7 @@ class PetSim(seed: Int = 7) {
                     if (hypot(p.x - f.x, p.y - (if (aquarium) f.y - radius * 0.3f else f.y)) > radius * 2.4f) { goToFood(p, f); return }
                     val bite = min(f.amount, dt * 0.5f)
                     f.amount -= bite
+                    if (f.amount <= 0f && bodyMode) burst(p, f)
                     p.fullness = (p.fullness + bite * 0.35f).coerceAtMost(1f)
                 } else if (bowl != null) {
                     if (hypot(p.x - bowl.x, p.y - bowl.y) > radius * 1.6f) { pickNext(p); return }
@@ -773,6 +840,19 @@ class PetSim(seed: Int = 7) {
             Mood.CARRIED -> Unit
             Mood.APPROACH, Mood.AWAIT, Mood.CHAT, Mood.CHASE, Mood.FLEE, Mood.DANCE, Mood.HUG, Mood.GREET -> thinkSocial(p, dt)
         }
+    }
+
+    /** 大腸菌を食べ終わった時：ファージは中から子ファージが飛び出し、マクロファージは消化のかけら */
+    private fun burst(p: Pet, f: Food) {
+        val n = if (legless) 5 else 8
+        repeat(n) { i ->
+            val a = i * 2f * PI.toFloat() / n + rnd.range(-0.2f, 0.2f)
+            val sp = radius * rnd.range(1.2f, 2.2f)
+            particles += if (legless) Particle(FxKind.BUBBLE, f.x, f.y, cos(a) * sp * 0.4f, sin(a) * sp * 0.4f - 20f, rnd.range(0.8f, 1.4f), rnd.range(0.4f, 0.8f))
+            else Particle(FxKind.PHAGELET, f.x, f.y, cos(a) * sp, sin(a) * sp, rnd.range(0.9f, 1.4f), rnd.range(0.7f, 1f))
+        }
+        sfx(if (legless) Sfx.BUBBLE else Sfx.REMOVE, f.x, rnd.range(1.1f, 1.4f), 0.7f)
+        trimParticles()
     }
 
     private fun finishMeal(p: Pet) {
@@ -1029,6 +1109,7 @@ class PetSim(seed: Int = 7) {
         FurnitureKind.PLANT, FurnitureKind.PALM, FurnitureKind.BUST, FurnitureKind.LAMP -> true
         FurnitureKind.TREE, FurnitureKind.STUMP, FurnitureKind.MUSHROOM, FurnitureKind.TENT, FurnitureKind.SUNFLOWER, FurnitureKind.DOGHOUSE -> true
         FurnitureKind.PHOTO -> true
+        FurnitureKind.BLOODCELL, FurnitureKind.CELL, FurnitureKind.DNA, FurnitureKind.CAPSULE -> true
         FurnitureKind.BOWL, FurnitureKind.WIDGET -> false
     }
 
@@ -1058,6 +1139,9 @@ class PetSim(seed: Int = 7) {
             FurnitureKind.BALL -> { setMood(p, Mood.PLAY, rnd.range(4f, 8f)); p.targetFurniture = f.id }
             FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id }
             FurnitureKind.TREE, FurnitureKind.STUMP -> { setMood(p, Mood.SIT, rnd.range(4f, 10f)); p.targetFurniture = f.id }
+            FurnitureKind.CELL -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id }
+            FurnitureKind.BLOODCELL -> { setMood(p, Mood.SIT, rnd.range(4f, 9f)); p.targetFurniture = f.id }
+            FurnitureKind.DNA, FurnitureKind.CAPSULE -> { setMood(p, Mood.IDLE, rnd.range(1.5f, 3f)); emote(p, if (f.kind == FurnitureKind.DNA) Emote.IDEA else Emote.CONFUSED, 1.5f) }
             FurnitureKind.PHOTO -> {
                 setMood(p, Mood.WATCH, rnd.range(3f, 6f)); p.targetFurniture = f.id
                 p.heading = atan2(f.y - p.y, f.x - p.x)
@@ -1326,7 +1410,7 @@ class PetSim(seed: Int = 7) {
         val FAST = setOf(Mood.SEEK_FOOD, Mood.PLAY, Mood.CHASE, Mood.FLEE)
         /** 1 つのエサを同時に食べられる数 */
         const val MAX_EATERS = 2
-        val SLEEP_SPOTS = setOf(FurnitureKind.BED, FurnitureKind.RUG, FurnitureKind.TENT, FurnitureKind.DOGHOUSE, FurnitureKind.CASTLE, FurnitureKind.ROCK, FurnitureKind.CHEST, FurnitureKind.SHELL)
+        val SLEEP_SPOTS = setOf(FurnitureKind.CELL, FurnitureKind.BED, FurnitureKind.RUG, FurnitureKind.TENT, FurnitureKind.DOGHOUSE, FurnitureKind.CASTLE, FurnitureKind.ROCK, FurnitureKind.CHEST, FurnitureKind.SHELL)
         val TALK = listOf("♪", "!", "?", "…", "♥", "☆", "🍙", "⚽", "🌸", "☀", "🌙", "💤", "🍰", "🎵", "😂", "😳", "✨", "🐟", "👀")
 
         fun angleDiff(from: Float, to: Float): Float {

@@ -24,7 +24,7 @@ class PetSimTest {
             assertTrue("NaN position ${p.key}", p.x.isFinite() && p.y.isFinite() && p.heading.isFinite())
             assertTrue("out of bounds ${p.x},${p.y}", p.x in -1f..2001f && p.y in -1f..1001f)
             assertTrue(p.fullness in 0f..1f && p.affection in 0f..1f)
-            if (!s.aquarium) p.legs.forEach { l ->
+            if (!s.aquarium && !s.legless) p.legs.forEach { l ->
                 assertTrue(l.footX.isFinite() && l.footY.isFinite())
                 // 足先が体から離れすぎない
                 val d = dist(l.footX, l.footY, p.x, p.y)
@@ -110,6 +110,34 @@ class PetSimTest {
             s.pets.filter { it.mood != Mood.CARRIED }.forEach { p ->
                 assertTrue("inside widget: ${p.x},${p.y}", !(kotlin.math.abs(p.x - 1000f) < 300f - 1f && kotlin.math.abs(p.y - 500f) < 150f - 1f))
             }
+        }
+    }
+
+    @Test
+    fun bodyModeBacteriaSwimAndGetEaten() {
+        for (legless in listOf(false, true)) {
+            val s = sim(false)
+            s.setBodyMode(true)
+            s.legless = legless
+            s.autoFood = true
+            s.pets.forEach { it.fullness = 0.2f }
+            repeat(6) { i -> s.dropFood(300f + i * 250f, 500f) }
+            val start = s.food.map { it.x to it.y }
+            repeat(30) { s.step(1f / 30f) }
+            // 泳いで動く
+            assertTrue(s.food.zip(start).any { (f, p0) -> dist(f.x, f.y, p0.first, p0.second) > 5f })
+            var t = 0
+            var bursts = 0
+            while (t < 30 * 150) {
+                s.step(1f / 30f); s.sounds.clear(); t++
+                bursts += s.particles.count { (it.kind == FxKind.PHAGELET || it.kind == FxKind.BUBBLE) && it.age == 0f }
+                s.food.forEach { f -> assertTrue(f.x.isFinite() && f.y.isFinite() && f.x in -1f..2001f && f.y in -1f..1001f) }
+                check(s)
+            }
+            // 自然にわいた分も含めて、どんどん食べられる
+            assertTrue("bacteria left: ${s.food.size}", s.food.size <= 3)
+            assertTrue(s.pets.any { it.fullness > 0.5f })
+            if (legless) assertTrue(s.pets.all { p -> p.legs.all { !it.stepping } })
         }
     }
 
