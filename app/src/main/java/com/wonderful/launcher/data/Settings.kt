@@ -517,6 +517,8 @@ data class PetConfig(
     val microbe: MicrobeStyle = MicrobeStyle.PHAGE,
     /** 体内テーマで大腸菌が自然にわく */
     val autoBacteria: Boolean = true,
+    /** 左上に操作のヒントを出す */
+    val showHints: Boolean = true,
 )
 
 /** 飼っているアプリ 1 体 */

@@ -720,7 +720,23 @@ private fun PetRoom(
                 Tool.FOOD -> if (theme == PetTheme.BODY) "タップした所に大腸菌を放す（逃げ回るので追いかけて食べます）" else "タップした所にエサ（なぞるとばらまく）"
                 Tool.FURNITURE -> "下から選んでタップで置く / 家具をタップで大きさ変更 / ドラッグで移動 / 長押しで片付け"
             }
-            Pill(theme, alpha = 0.75f) { RetroLabel(hint, size = 11.sp, color = ui.text) }
+            if (cfg.showHints) Pill(theme, alpha = 0.75f) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RetroLabel(hint, size = 11.sp, color = ui.text)
+                    Spacer(Modifier.width(6.dp))
+                    // ✕ で操作説明を消す（設定 → 飼育 でまた出せる）
+                    Box(
+                        Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(50))
+                            .clickable {
+                                vm.updateSettings { it.copy(pet = it.pet.copy(showHints = false)) }
+                                Toast.makeText(context, "操作説明を消しました（設定 → 飼育 でまた表示できます）", Toast.LENGTH_SHORT).show()
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) { RetroLabel("✕", size = 12.sp, color = ui.text, weight = FontWeight.Bold) }
+                }
+            }
         }
 
         // ── 家具を選ぶ帯 ──
@@ -1007,6 +1023,7 @@ fun PetSettingsContent(s: LauncherSettings, vm: LauncherViewModel, inPetMode: Bo
     ChoiceSetting("足", LegStyle.entries, cfg.legStyle, { it.label }, "アクアリウムではヒレの形が変わります") { v -> u { it.copy(legStyle = v) } }
     ChoiceSetting("足の色", LegColor.entries, cfg.legColor, { it.label }) { v -> u { it.copy(legColor = v) } }
     SwitchSetting("名前を表示", cfg.showNames) { v -> u { it.copy(showNames = v) } }
+    SwitchSetting("操作説明を表示", cfg.showHints, "飼育モードの左上に出る、操作のヒントの文章") { v -> u { it.copy(showHints = v) } }
     SwitchSetting("振動", cfg.haptic, "なでた時・長押しした時") { v -> u { it.copy(haptic = v) } }
     SectionHeader("音")
     SwitchSetting("効果音", cfg.sound, "なでた時・ごはん・おしゃべり・いびき など") { v -> u { it.copy(sound = v) } }
