@@ -100,6 +100,13 @@ fun AppMenu(
                             MenuItem(Glyph.BACK, "右へ", p.yellow, Modifier.weight(1f), flip = true) { vm.moveDock(app.key, 1) }
                         }
                     }
+                    val isPet = data.pets.any { it.key == app.key }
+                    MenuItem(Glyph.PLUS, if (isPet) "飼育をやめる" else "飼育する（横持ちモード）", p.mint) {
+                        if (!vm.togglePet(app.key)) {
+                            android.widget.Toast.makeText(context, "飼えるのは最大 ${com.wonderful.launcher.data.MAX_PETS} 体までです", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        onDismiss()
+                    }
                     MenuItem(Glyph.NONE, if (hidden) "非表示を解除" else "アプリを非表示", p.purple) {
                         vm.toggleHidden(app.key); onDismiss()
                     }

@@ -367,6 +367,214 @@ enum class OrientationMode(val label: String) {
     LANDSCAPE("横固定"),
 }
 
+// ─────────────────────────────────────────────
+// 飼育モード（横持ちの時だけ）
+// ─────────────────────────────────────────────
+
+enum class PetTheme(val label: String) {
+    CASUAL("カジュアル"),
+    VAPOR("ヴェイパー"),
+    AQUARIUM("アクアリウム"),
+    MEADOW("野原"),
+    /** 体の中。アプリが微生物の姿になって大腸菌を食べる */
+    BODY("体内"),
+}
+
+/** 体内テーマでの姿 */
+enum class MicrobeStyle(val label: String) {
+    PHAGE("T2ファージ"),
+    MACROPHAGE("マクロファージ"),
+}
+
+/** 目の種類。MIXED は「1 体ずつバラバラ」 */
+enum class EyeStyle(val label: String) {
+    GOOGLY("ぎょろ目"),
+    DOTS("つぶら"),
+    ANIME("キラキラ"),
+    SMILE("にっこり"),
+    SLEEPY("ねむそう"),
+    ANGRY("つり目"),
+    CYCLOPS("ひとつ目"),
+    SPIDER("クモの8つ目"),
+    HEART("ハート"),
+    STAR("ほし"),
+    BUTTON("ボタン"),
+    SHADES("サングラス"),
+    MIXED("バラバラ"),
+}
+
+/** 頭につける物 */
+enum class Accessory(val label: String) {
+    NONE("なし"),
+    RIBBON("リボン"),
+    TOPHAT("シルクハット"),
+    CROWN("王冠"),
+    PARTY("パーティー帽"),
+    FLOWER("お花"),
+    HEADPHONES("ヘッドホン"),
+    ANTENNA("アンテナ"),
+    HALO("天使の輪"),
+    CAT_EARS("ネコ耳"),
+    BEANIE("ニット帽"),
+    MIXED("バラバラ"),
+}
+
+/** 足の見た目 */
+enum class LegStyle(val label: String) {
+    THIN("ふつう"),
+    HAIRY("もじゃもじゃ"),
+    ROBOT("メカ"),
+    CANDY("しましま"),
+    STUBBY("ずんぐり"),
+    MIXED("バラバラ"),
+}
+
+/** 足の色 */
+enum class LegColor(val label: String) {
+    THEME("テーマの色"),
+    ICON("アイコンの色"),
+    RAINBOW("虹色"),
+    MIXED("バラバラ"),
+}
+
+/** 置ける家具。※ 保存データに名前で入るので、名前の変更・削除はしないこと */
+enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boolean = false, val outdoor: Boolean = false, val body: Boolean = false) {
+    BED("ベッド", "🛏"),
+    SOFA("ソファ", "🛋"),
+    BALL("ボール", "⚽"),
+    PLANT("観葉植物", "🪴"),
+    LAMP("ランプ", "💡"),
+    RUG("ラグ", "🟪"),
+    TOWER("やぐら", "🗼"),
+    TV("テレビ", "📺"),
+    BOWL("エサ皿", "🥣"),
+    PALM("ヤシの木", "🌴"),
+    BUST("石膏像", "🗿"),
+    ROCK("岩", "🪨", aquarium = true),
+    SEAWEED("水草", "🌿", aquarium = true),
+    CASTLE("お城", "🏰", aquarium = true),
+    CHEST("宝箱", "🧰", aquarium = true),
+    CORAL("サンゴ", "🪸", aquarium = true),
+    SHELL("貝", "🐚", aquarium = true),
+    TREE("木", "🌳", outdoor = true),
+    STUMP("切り株", "🪵", outdoor = true),
+    MUSHROOM("キノコ", "🍄", outdoor = true),
+    TENT("テント", "⛺", outdoor = true),
+    SUNFLOWER("ひまわり", "🌻", outdoor = true),
+    DOGHOUSE("小屋", "🛖", outdoor = true),
+    BLOODCELL("赤血球", "🔴", body = true),
+    CELL("細胞", "🧫", body = true),
+    DNA("DNA", "🧬", body = true),
+    CAPSULE("カプセル", "💊", body = true),
+    /** 好きな写真（写真立て） */
+    PHOTO("写真", "🖼"),
+    /** 好きなウィジェット */
+    WIDGET("ウィジェット", "🧩"),
+}
+
+/** その部屋（テーマ）に置ける家具か */
+fun FurnitureKind.availableIn(room: PetTheme): Boolean = this == FurnitureKind.PHOTO || this == FurnitureKind.WIDGET || when (room) {
+    PetTheme.AQUARIUM -> aquarium || this == FurnitureKind.BALL
+    PetTheme.MEADOW -> outdoor || this in setOf(FurnitureKind.BALL, FurnitureKind.BOWL, FurnitureKind.RUG, FurnitureKind.ROCK, FurnitureKind.PALM)
+    PetTheme.BODY -> body || this in setOf(FurnitureKind.BALL, FurnitureKind.BOWL)
+    PetTheme.CASUAL, PetTheme.VAPOR -> !aquarium && !outdoor && !body
+}
+
+@Serializable
+data class PetConfig(
+    /** 横持ちにすると飼育モードになる */
+    val enabled: Boolean = true,
+    val theme: PetTheme = PetTheme.CASUAL,
+    /** 動く速さ */
+    val speed: Float = 1f,
+    /** 大きさ */
+    val scale: Float = 1f,
+    /** 飼育モードの最大フレームレート */
+    val fps: Int = 30,
+    val showNames: Boolean = true,
+    /** 画面の回転ロック中でも横向きにする */
+    val ignoreRotationLock: Boolean = false,
+    /** お腹いっぱいからお腹ペコペコになるまでの時間 */
+    val hungerHours: Float = 6f,
+    /** 撫でた時などに振動 */
+    val haptic: Boolean = true,
+    /** 足の本数（片側） */
+    val legPairs: Int = 4,
+    val eyes: EyeStyle = EyeStyle.MIXED,
+    val accessory: Accessory = Accessory.MIXED,
+    val legStyle: LegStyle = LegStyle.THIN,
+    val legColor: LegColor = LegColor.THEME,
+    /** 効果音 */
+    val sound: Boolean = true,
+    val soundVolume: Float = 0.7f,
+    /** マナーモード・サイレント中は鳴らさない */
+    val soundRespectSilent: Boolean = true,
+    /** 仲間どうしで遊ぶ（おしゃべり・おにごっこ・ダンスなど） */
+    val social: Boolean = true,
+    /** 気持ちを吹き出しで出す */
+    val emotes: Boolean = true,
+    /** 体内テーマでの姿 */
+    val microbe: MicrobeStyle = MicrobeStyle.PHAGE,
+    /** 体内テーマで大腸菌が自然にわく */
+    val autoBacteria: Boolean = true,
+    /** 左上に操作のヒントを出す */
+    val showHints: Boolean = true,
+)
+
+/** 飼っているアプリ 1 体 */
+@Serializable
+data class PetEntry(
+    val key: String,
+    /** 満腹度 0〜1 */
+    val fullness: Float = 0.8f,
+    /** なつき度 0〜1 */
+    val affection: Float = 0.2f,
+    /** 最後に様子を保存した時刻（離れていた間にお腹が減る） */
+    val lastSeen: Long = 0,
+    /** 着せ替え（null = 飼育モードの設定に従う） */
+    val eyes: EyeStyle? = null,
+    val accessory: Accessory? = null,
+    val legStyle: LegStyle? = null,
+)
+
+/** 1 体ぶんの見た目（設定と個別の着せ替えから決まる） */
+data class PetLook(val eyes: EyeStyle, val accessory: Accessory, val legStyle: LegStyle, val legColor: LegColor)
+
+/** 「バラバラ」の時はアプリごとに決まった物を選ぶ（毎回変わらないように） */
+private fun <T : Enum<T>> pick(global: T, own: T?, mixed: T, all: List<T>, key: String, salt: Int): T {
+    val v = own?.takeIf { it != mixed } ?: global
+    if (v != mixed) return v
+    val pool = all.filter { it != mixed }
+    return pool[Math.floorMod(key.hashCode() * 31 + salt, pool.size)]
+}
+
+fun PetConfig.lookFor(e: PetEntry?, key: String): PetLook = PetLook(
+    eyes = pick(eyes, e?.eyes, EyeStyle.MIXED, EyeStyle.entries, key, 1),
+    accessory = pick(accessory, e?.accessory, Accessory.MIXED, Accessory.entries, key, 7),
+    legStyle = pick(legStyle, e?.legStyle, LegStyle.MIXED, LegStyle.entries, key, 13),
+    legColor = pick(legColor, null, LegColor.MIXED, LegColor.entries, key, 29),
+)
+
+/** 置いた家具。位置は画面に対する割合（0〜1） */
+@Serializable
+data class FurnitureItem(
+    val id: String,
+    val kind: FurnitureKind = FurnitureKind.BALL,
+    val x: Float = 0.5f,
+    val y: Float = 0.5f,
+    /** どの部屋に置いたか（カジュアル/ヴェイパーとアクアリウムで別） */
+    val room: PetTheme = PetTheme.CASUAL,
+    /** 大きさ（1 = ふつう） */
+    val scale: Float = 1f,
+    /** 写真：アプリ内に保存した画像のファイル名 */
+    val photo: String = "",
+    /** ウィジェット */
+    val widget: WidgetItem? = null,
+)
+
+const val MAX_PETS = 10
+const val MAX_FURNITURE = 30
+
 /**
  * ランチャーの全設定。値を追加する場合はデフォルト値を必ず付ける
  * （古いバックアップやバージョンから読み込んでも壊れないように）。
@@ -549,6 +757,9 @@ data class LauncherSettings(
     val chargeOnUnplug: Boolean = false,
     val chargeHaptic: Boolean = true,
 
+    // ── 飼育モード ──
+    val pet: PetConfig = PetConfig(),
+
     // ── 軽量化 ──
     /** ぼかし・残像・粒・画面エフェクトなど重い演出をまとめて止める */
     val liteMode: Boolean = false,
@@ -615,6 +826,10 @@ data class LauncherData(
     val topWidget: WidgetItem? = null,
     /** ジェスチャーで呼び出すウィジェット（GestureSlot 名 → ウィジェット） */
     val gestureWidgets: Map<String, WidgetItem> = emptyMap(),
+    /** 飼育モードで飼っているアプリ（最大 [MAX_PETS]） */
+    val pets: List<PetEntry> = emptyList(),
+    /** 飼育モードに置いた家具 */
+    val furniture: List<FurnitureItem> = emptyList(),
     /**
      * 保存形式のバージョン。v1（最初のリリース）にはこの項目が無いので、
      * 読み込み時に無ければ 1 として扱いマイグレーションする。

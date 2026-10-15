@@ -29,6 +29,13 @@ import com.wonderful.launcher.data.WidgetItem
 import com.wonderful.launcher.data.WidgetKind
 import com.wonderful.launcher.data.WidgetManager
 import com.wonderful.launcher.data.findFreeSpot
+import com.wonderful.launcher.data.FurnitureItem
+import com.wonderful.launcher.data.FurnitureKind
+import com.wonderful.launcher.data.MAX_FURNITURE
+import com.wonderful.launcher.data.MAX_PETS
+import com.wonderful.launcher.data.PetEntry
+import com.wonderful.launcher.data.PetTheme
+import com.wonderful.launcher.ui.pets.PetPhotos
 import com.wonderful.launcher.data.WidgetTarget
 import com.wonderful.launcher.data.allWidgets
 import com.wonderful.launcher.data.mapAllWidgets
@@ -203,6 +210,85 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ── 飼育モード ──
+
+    /** 飼う / やめる。いっぱい（[MAX_PETS] 体）なら false */
+    fun togglePet(key: String): Boolean {
+        var ok = true
+        store.update { d ->
+            when {
+                d.pets.any { it.key == key } -> d.copy(pets = d.pets.filterNot { it.key == key })
+                d.pets.size >= MAX_PETS -> { ok = false; d }
+                else -> d.copy(pets = d.pets + PetEntry(key, lastSeen = System.currentTimeMillis()))
+            }
+        }
+        return ok
+    }
+
+    /** 1 体ずつの着せ替え */
+    fun setPetLook(key: String, f: (PetEntry) -> PetEntry) = store.update { d ->
+        d.copy(pets = d.pets.map { if (it.key == key) f(it) else it })
+    }
+
+    /** おまかせ：球体のアプリから選ぶ */
+    fun autoPickPets(count: Int = 6) {
+        store.update { d ->
+            val now = System.currentTimeMillis()
+            val pool = (d.sphereApps + apps.value.map { it.key }).distinct().filter { k -> apps.value.any { it.key == k } }
+            d.copy(pets = pool.take(count.coerceAtMost(MAX_PETS)).map { PetEntry(it, lastSeen = now) })
+        }
+    }
+
+    /** 飼育モードを離れる時に、お腹の具合・なつき度・ボールの位置を保存 */
+    fun savePetState(stats: Map<String, Pair<Float, Float>>, balls: Map<String, Pair<Float, Float>>) {
+        val now = System.currentTimeMillis()
+        store.update { d ->
+            d.copy(
+                pets = d.pets.map { e -> stats[e.key]?.let { (f, a) -> e.copy(fullness = f, affection = a, lastSeen = now) } ?: e },
+                furniture = d.furniture.map { f -> balls[f.id]?.let { (x, y) -> f.copy(x = x, y = y) } ?: f },
+            )
+        }
+    }
+
+    fun addFurniture(kind: FurnitureKind, x: Float, y: Float, room: PetTheme, photo: String = ""): Boolean {
+        var ok = true
+        store.update { d ->
+            if (d.furniture.count { it.room == room } >= MAX_FURNITURE) { ok = false; d }
+            else d.copy(furniture = d.furniture + FurnitureItem(UUID.randomUUID().toString(), kind, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f), room, photo = photo))
+        }
+        return ok
+    }
+
+    fun setFurnitureScale(id: String, scale: Float) = store.update { d ->
+        d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(scale = scale.coerceIn(0.4f, 3f)) else it })
+    }
+
+    fun setFurniturePhoto(id: String, photo: String) {
+        val old = data.value.furniture.firstOrNull { it.id == id }?.photo
+        store.update { d -> d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(photo = photo) else it }) }
+        if (!old.isNullOrEmpty() && old != photo) PetPhotos.delete(ctx, old)
+    }
+
+    fun moveFurniture(id: String, x: Float, y: Float) = store.update { d ->
+        d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(x = x.coerceIn(0f, 1f), y = y.coerceIn(0f, 1f)) else it })
+    }
+
+    fun removeFurniture(id: String) {
+        data.value.furniture.firstOrNull { it.id == id }?.let(::releaseFurniture)
+        store.update { d -> d.copy(furniture = d.furniture.filterNot { it.id == id }) }
+    }
+
+    fun clearFurniture(room: PetTheme) {
+        data.value.furniture.filter { it.room == room }.forEach(::releaseFurniture)
+        store.update { d -> d.copy(furniture = d.furniture.filterNot { it.room == room }) }
+    }
+
+    /** 家具を片付ける時に、ウィジェットの ID と写真のファイルも片付ける */
+    private fun releaseFurniture(f: FurnitureItem) {
+        f.widget?.let { if (it.kind == WidgetKind.SYSTEM) widgets.deleteId(it.appWidgetId) }
+        if (f.photo.isNotEmpty()) PetPhotos.delete(ctx, f.photo)
+    }
+
     /** 設定画面からの「充電アニメーションを試す」 */
     private val _chargePreview = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val chargePreview: SharedFlow<Unit> = _chargePreview.asSharedFlow()
@@ -375,6 +461,14 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 store.update { it.copy(gestureWidgets = it.gestureWidgets + (target.slot to item)) }
             }
             is WidgetTarget.Replace -> replaceWidgetId(target.itemId, appWidgetId, provider)
+            is WidgetTarget.Furniture -> {
+                var ok = true
+                store.update { d ->
+                    if (d.furniture.count { it.room == target.room } >= MAX_FURNITURE) { ok = false; d }
+                    else d.copy(furniture = d.furniture + FurnitureItem(UUID.randomUUID().toString(), FurnitureKind.WIDGET, target.x.coerceIn(0f, 1f), target.y.coerceIn(0f, 1f), target.room, widget = item))
+                }
+                if (!ok) widgets.deleteId(appWidgetId)
+            }
         }
     }
 

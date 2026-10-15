@@ -144,6 +144,14 @@ object Migration {
             lava = s.lava.copy(blobs = s.lava.blobs.coerceIn(1, 20)),
             aurora = s.aurora.copy(ribbons = s.aurora.ribbons.coerceIn(1, 8)),
             vapor = s.vapor.copy(starCount = s.vapor.starCount.coerceIn(0, 500), horizon = s.vapor.horizon.finiteIn(0.3f, 0.85f, 0.62f)),
+            pet = s.pet.copy(
+                speed = s.pet.speed.finiteIn(0.2f, 3f, 1f),
+                scale = s.pet.scale.finiteIn(0.5f, 2f, 1f),
+                fps = if (s.pet.fps in listOf(15, 20, 30, 45, 60)) s.pet.fps else 30,
+                hungerHours = s.pet.hungerHours.finiteIn(0.5f, 72f, 6f),
+                legPairs = s.pet.legPairs.coerceIn(2, 5),
+                soundVolume = s.pet.soundVolume.finiteIn(0f, 1f, 0.7f),
+            ),
         )
         if (!settingsReachable(s)) s = s.copy(longPressAction = GestureAction.SETTINGS)
 
@@ -166,6 +174,18 @@ object Migration {
             gestureWidgets = d.gestureWidgets
                 .filterKeys { k -> GestureSlot.entries.any { it.name == k } }
                 .mapValues { fix(it.value) },
+            pets = d.pets.filter { it.key.isNotBlank() }.distinctBy { it.key }.take(MAX_PETS).map {
+                it.copy(fullness = it.fullness.finiteIn(0f, 1f, 0.8f), affection = it.affection.finiteIn(0f, 1f, 0.2f))
+            },
+            furniture = d.furniture.distinctBy { it.id }.map {
+                it.copy(
+                    x = it.x.finiteIn(0f, 1f, 0.5f), y = it.y.finiteIn(0f, 1f, 0.5f),
+                    scale = it.scale.finiteIn(0.4f, 3f, 1f),
+                    widget = it.widget?.let(::fix),
+                    // ウィジェットの家具なのにウィジェットが無い物は捨てる（下で）
+                )
+            }.filter { it.kind != FurnitureKind.WIDGET || it.widget != null }
+                .groupBy { it.room }.values.flatMap { it.take(MAX_FURNITURE) },
         )
     }
 
@@ -254,8 +274,18 @@ object BackupCodec {
         for ((key, value) in root) {
             when {
                 key == "settings" && value is JsonObject -> {
-                    // 設定は 1 項目ずつ確かめる
-                    out[key] = JsonObject(value.filter { (k, v) -> readable(LauncherSettings.serializer(), JsonObject(mapOf(k to v))) })
+                    // 設定は 1 項目ずつ確かめる。入れ子の設定（壁紙・飼育モードなど）は中の項目ごとに
+                    val ser = LauncherSettings.serializer()
+                    out[key] = JsonObject(value.mapNotNull { (k, v) ->
+                        when {
+                            readable(ser, JsonObject(mapOf(k to v))) -> k to v
+                            v is JsonObject -> {
+                                val kept = JsonObject(v.filter { (ik, iv) -> readable(ser, JsonObject(mapOf(k to JsonObject(mapOf(ik to iv))))) })
+                                if (readable(ser, JsonObject(mapOf(k to kept)))) k to kept else null
+                            }
+                            else -> null
+                        }
+                    }.toMap())
                 }
                 value is JsonArray && !readable(LauncherData.serializer(), JsonObject(mapOf(key to value))) -> {
                     // リスト（フォルダやウィジェット）は壊れた要素だけ捨てる
@@ -292,13 +322,14 @@ fun LauncherSettings.effective(): LauncherSettings = if (!liteMode) this else co
 )
 
 /** ウィジェット画面・時計の位置・ジェスチャー用のすべてのウィジェット */
-fun LauncherData.allWidgets(): List<WidgetItem> = widgets + listOfNotNull(topWidget) + gestureWidgets.values
+fun LauncherData.allWidgets(): List<WidgetItem> = widgets + listOfNotNull(topWidget) + gestureWidgets.values + furniture.mapNotNull { it.widget }
 
 /** すべてのウィジェットに同じ変換をかける */
 fun LauncherData.mapAllWidgets(f: (WidgetItem) -> WidgetItem): LauncherData = copy(
     widgets = widgets.map(f),
     topWidget = topWidget?.let(f),
     gestureWidgets = gestureWidgets.mapValues { f(it.value) },
+    furniture = furniture.map { item -> item.widget?.let { item.copy(widget = f(it)) } ?: item },
 )
 
 /** 時計の位置に時計を出すか */
@@ -317,4 +348,6 @@ sealed interface WidgetTarget {
     data class Gesture(val slot: String) : WidgetTarget
     /** 既存のウィジェットを作り直す（復元後の再設定） */
     data class Replace(val itemId: String) : WidgetTarget
+    /** 飼育モードの家具として置く（位置は部屋に対する割合） */
+    data class Furniture(val room: PetTheme, val x: Float, val y: Float) : WidgetTarget
 }

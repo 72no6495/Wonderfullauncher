@@ -257,6 +257,97 @@ class BackupCompatTest {
     }
 
     @Test
+    fun oldBackupsHaveNoPetsAndDefaultPetSettings() {
+        for (v in 1..4) {
+            val d = BackupCodec.decode(fixture("backup_v$v.json"))
+            assertTrue(d.pets.isEmpty())
+            assertTrue(d.furniture.isEmpty())
+            assertEquals(PetConfig(), d.settings.pet)
+        }
+    }
+
+    @Test
+    fun petsAndFurnitureSurviveRoundTripAndAreSanitized() {
+        val pets = (0 until 14).map { PetEntry("p$it/.A", fullness = if (it == 0) Float.NaN else 2f, affection = -1f) } + PetEntry("p1/.A")
+        val furniture = listOf(
+            FurnitureItem("f1", FurnitureKind.BED, 1.5f, -0.2f, PetTheme.CASUAL),
+            FurnitureItem("f1", FurnitureKind.BALL, 0.5f, 0.5f, PetTheme.CASUAL),
+            FurnitureItem("f2", FurnitureKind.CASTLE, 0.3f, 0.9f, PetTheme.AQUARIUM),
+        )
+        val s = LauncherSettings(pet = PetConfig(theme = PetTheme.AQUARIUM, speed = 99f, fps = 7, legPairs = 9))
+        val d = BackupCodec.decode(BackupCodec.encode(LauncherData(settings = s, pets = pets, furniture = furniture)))
+        assertEquals(MAX_PETS, d.pets.size)
+        assertEquals(d.pets.map { it.key }.distinct(), d.pets.map { it.key })
+        assertTrue(d.pets.all { it.fullness in 0f..1f && it.affection in 0f..1f })
+        assertEquals(listOf("f1", "f2"), d.furniture.map { it.id })
+        assertEquals(1f, d.furniture[0].x, 0.001f)
+        assertEquals(0f, d.furniture[0].y, 0.001f)
+        assertEquals(PetTheme.AQUARIUM, d.settings.pet.theme)
+        assertEquals(3f, d.settings.pet.speed, 0.001f)
+        assertEquals(30, d.settings.pet.fps)
+        assertEquals(5, d.settings.pet.legPairs)
+    }
+
+    @Test
+    fun damagedPetEntryDoesNotBreakOthers() {
+        val text = """
+            {"pets":[{"key":"a/.A","fullness":0.5},{"fullness":"bad"},{"key":"b/.B"}],
+             "furniture":[{"id":"x","kind":"NOT_A_KIND"},{"id":"y","kind":"SOFA","x":0.2,"y":0.3}],
+             "settings":{"pet":{"theme":"AQUARIUM","speed":"fast"}}}
+        """.trimIndent()
+        val d = BackupCodec.decode(text)
+        assertEquals(listOf("a/.A", "b/.B"), d.pets.map { it.key })
+        assertTrue(d.furniture.any { it.id == "y" && it.kind == FurnitureKind.SOFA })
+        assertEquals(PetTheme.AQUARIUM, d.settings.pet.theme)
+        assertEquals(1f, d.settings.pet.speed, 0.001f)
+    }
+
+    @Test
+    fun petLooksResolveAndSurviveRoundTrip() {
+        val cfg = PetConfig(eyes = EyeStyle.MIXED, accessory = Accessory.MIXED, legStyle = LegStyle.MIXED, legColor = LegColor.MIXED)
+        val keys = (0 until 200).map { "pkg$it/.Main" }
+        val looks = keys.map { cfg.lookFor(null, it) }
+        // 「バラバラ」はそのまま使わず、必ず具体的な見た目になる
+        assertTrue(looks.none { it.eyes == EyeStyle.MIXED || it.accessory == Accessory.MIXED || it.legStyle == LegStyle.MIXED || it.legColor == LegColor.MIXED })
+        // いろいろな種類が出る / 同じアプリはいつも同じ
+        assertTrue(looks.map { it.eyes }.toSet().size >= 8)
+        assertEquals(looks, keys.map { cfg.lookFor(null, it) })
+        // 個別の着せ替えが優先
+        val own = PetEntry("a/.A", eyes = EyeStyle.HEART, accessory = Accessory.CROWN)
+        assertEquals(EyeStyle.HEART, cfg.lookFor(own, own.key).eyes)
+        assertEquals(Accessory.CROWN, PetConfig(accessory = Accessory.NONE).lookFor(own, own.key).accessory)
+        val d = BackupCodec.decode(BackupCodec.encode(LauncherData(pets = listOf(own), settings = LauncherSettings(pet = PetConfig(theme = PetTheme.MEADOW)))))
+        assertEquals(EyeStyle.HEART, d.pets[0].eyes)
+        assertEquals(null, d.pets[0].legStyle)
+        assertEquals(PetTheme.MEADOW, d.settings.pet.theme)
+        // 野原には野原の家具
+        assertTrue(FurnitureKind.TREE.availableIn(PetTheme.MEADOW) && !FurnitureKind.TREE.availableIn(PetTheme.CASUAL))
+        assertTrue(FurnitureKind.CASTLE.availableIn(PetTheme.AQUARIUM) && !FurnitureKind.CASTLE.availableIn(PetTheme.MEADOW))
+    }
+
+    @Test
+    fun photoAndWidgetFurnitureRoundTrip() {
+        val w = WidgetItem("w1", WidgetKind.SYSTEM, appWidgetId = 42, provider = "a/.W", w = 4, h = 2)
+        val d0 = LauncherData(
+            furniture = listOf(
+                FurnitureItem("p", FurnitureKind.PHOTO, 0.3f, 0.4f, PetTheme.MEADOW, scale = 9f, photo = "photo_x.jpg"),
+                FurnitureItem("w", FurnitureKind.WIDGET, 0.6f, 0.5f, PetTheme.CASUAL, widget = w),
+                // ウィジェットの家具なのに中身が無い物は捨てる
+                FurnitureItem("broken", FurnitureKind.WIDGET, 0.5f, 0.5f),
+            ),
+        )
+        val d = BackupCodec.decode(BackupCodec.encode(d0))
+        assertEquals(listOf("p", "w"), d.furniture.map { it.id })
+        assertEquals("photo_x.jpg", d.furniture[0].photo)
+        assertEquals(3f, d.furniture[0].scale, 0.001f)
+        // 家具のウィジェットも「すべてのウィジェット」に入る（ID の整理・復元のため）
+        assertTrue(d.allWidgets().any { it.id == "w1" && it.appWidgetId == 42 })
+        val moved = d.mapAllWidgets { it.copy(appWidgetId = 7) }
+        assertEquals(7, moved.furniture.first { it.id == "w" }.widget?.appWidgetId)
+        assertTrue(FurnitureKind.PHOTO.availableIn(PetTheme.AQUARIUM) && FurnitureKind.WIDGET.availableIn(PetTheme.MEADOW))
+    }
+
+    @Test
     fun freeSpotAvoidsOverlap() {
         val ws = listOf(WidgetItem("a", x = 0, y = 0, w = 8, h = 2), WidgetItem("b", x = 0, y = 2, w = 4, h = 2))
         assertEquals(4 to 2, findFreeSpot(ws, 4, 2))
