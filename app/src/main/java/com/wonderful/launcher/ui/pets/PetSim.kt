@@ -560,7 +560,6 @@ class PetSim(seed: Int = 7) {
             // 減った物は少しずつ元に戻る（腫瘍はしぶとい）
             when (f.kind) {
                 FurnitureKind.FOOD_LUMP, FurnitureKind.CAPSULE -> f.state = min(1f, f.state + dt * 0.02f)
-                FurnitureKind.TUMOR -> f.state = min(1f, f.state + dt * 0.012f)
                 else -> Unit
             }
             if (rolls(f.kind)) {
@@ -1189,8 +1188,9 @@ class PetSim(seed: Int = 7) {
         // 上に乗る家具
         FurnitureKind.TOWER -> f.x to f.y - furnitureRadius(f) * 0.45f
         FurnitureKind.STUMP -> f.x to f.y - furnitureRadius(f) * 0.25f
-        // 腫瘍はみんなで囲んで攻撃
-        FurnitureKind.TUMOR, FurnitureKind.FOOD_LUMP -> {
+        // 腫瘍はトランポリン（上に乗ってはねる）
+        FurnitureKind.TUMOR -> (f.x + rnd.range(-0.3f, 0.3f) * furnitureRadius(f)) to f.y - furnitureRadius(f) * 0.35f
+        FurnitureKind.FOOD_LUMP -> {
             val a = rnd.range(0f, 2f * PI.toFloat())
             (f.x + cos(a) * furnitureRadius(f) * 1.2f) to (f.y + sin(a) * furnitureRadius(f) * 1.0f)
         }
@@ -1207,8 +1207,8 @@ class PetSim(seed: Int = 7) {
 
     /** 同時に使える数 */
     fun capacity(kind: FurnitureKind): Int = when (kind) {
-        FurnitureKind.TV, FurnitureKind.RUG, FurnitureKind.TUMOR -> 3
-        FurnitureKind.FOOD_LUMP, FurnitureKind.COIN, FurnitureKind.MARBLE -> 2
+        FurnitureKind.TV, FurnitureKind.RUG -> 3
+        FurnitureKind.FOOD_LUMP, FurnitureKind.COIN, FurnitureKind.MARBLE, FurnitureKind.TUMOR -> 2
         FurnitureKind.PHOTO, FurnitureKind.BALL, FurnitureKind.TREE, FurnitureKind.SOFA, FurnitureKind.PALM,
         FurnitureKind.CASTLE, FurnitureKind.CORAL, FurnitureKind.SEAWEED, FurnitureKind.BLOODCELL -> 2
         else -> 1
@@ -1260,7 +1260,7 @@ class PetSim(seed: Int = 7) {
             FurnitureKind.DNA -> use(3f, 5f, Emote.IDEA)
             FurnitureKind.CAPSULE -> use(3f, 5f, Emote.CONFUSED)
             FurnitureKind.FOOD_LUMP -> use(4f, 7f, Emote.YUMMY)
-            FurnitureKind.TUMOR -> use(5f, 9f, Emote.ANGRY)
+            FurnitureKind.TUMOR -> use(3f, 6f, Emote.HAPPY)
             FurnitureKind.BATTERY -> use(3f, 5f, Emote.CONFUSED)
             FurnitureKind.WIDGET -> setMood(p, Mood.IDLE, 1f)
         }
@@ -1276,9 +1276,9 @@ class PetSim(seed: Int = 7) {
         val r = furnitureRadius(f)
         fun every(sec: Float) { if (tick) p.talkTimer = sec * rnd.range(0.8f, 1.2f) }
         when (f.kind) {
-            FurnitureKind.BED, FurnitureKind.MUSHROOM -> if (tick) {
-                // トランポリン
-                every(if (f.kind == FurnitureKind.MUSHROOM) 0.7f else 0.9f)
+            FurnitureKind.BED, FurnitureKind.MUSHROOM, FurnitureKind.TUMOR -> if (tick) {
+                // トランポリン（腫瘍はぶよぶよでよくはねる）
+                every(when (f.kind) { FurnitureKind.MUSHROOM -> 0.7f; FurnitureKind.TUMOR -> 0.6f; else -> 0.9f })
                 p.hop = 1f; p.joy = 0.6f; f.active = 0.5f
                 sfx(Sfx.PICKUP, f.x, p.voice * 1.2f, 0.45f)
             }
@@ -1341,19 +1341,6 @@ class PetSim(seed: Int = 7) {
                 }
                 if (tick) { every(0.5f); particles += Particle(FxKind.CRUMB, f.x + rnd.range(-r, r) * 0.6f, f.y, rnd.range(-50f, 50f), -60f, 0.6f, 0.6f); sfx(Sfx.EAT, f.x, p.voice, 0.5f) }
                 if (f.state <= 0.05f) p.moodLength = p.moodTime
-            }
-            FurnitureKind.TUMOR -> {
-                // みんなで攻撃して小さくする
-                f.state = max(0.25f, f.state - dt * 0.05f)
-                if (tick) {
-                    every(0.45f)
-                    f.active = 0.4f
-                    p.hop = 0.5f
-                    repeat(2) { particles += Particle(FxKind.ZAP, f.x + rnd.range(-r, r) * 0.6f, f.y + rnd.range(-r, r) * 0.6f, 0f, 0f, 0.35f, rnd.range(0.6f, 1f)) }
-                    sfx(Sfx.KICK, f.x, rnd.range(0.7f, 1f), 0.5f)
-                    if (rnd.nextFloat() < 0.2f) emote(p, Emote.ANGRY, 1f, sound = false)
-                }
-                if (f.state <= 0.26f && rnd.nextFloat() < dt * 0.5f) emote(p, Emote.HAPPY, 1.2f)
             }
             FurnitureKind.BATTERY -> if (tick) {
                 // つつくとビリッ

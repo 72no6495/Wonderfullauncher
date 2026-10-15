@@ -58,43 +58,39 @@ fun DrawScope.drawBodyBackground(sim: PetSim, t: Float, unit: Float) {
         x += step
     }
 
-    // 輪状ヒダ（縦に走る大きなしわ。波で寄ったり離れたりする）
-    val folds = 9
+    // 輪状ヒダ（腸の内側をぐるっと一周する大きなひだ）。
+    // 横から見ると、上下の壁から壁へ三日月形にかかる。ぜん動の波で寄り集まり、縮んだ所では太く高くなる
+    val folds = 7
     for (i in 0 until folds) {
         val bx = w * (i + 0.5f) / folds
-        val fx = bx + shift(bx) * 2.2f
         val q = squeeze(bx)
-        val path = Path()
-        var y = 0f
-        path.moveTo(fx + sin(i * 1.7f) * unit * 10f, 0f)
-        while (y <= h) {
-            path.lineTo(fx + sin(y / (unit * 60f) + i * 1.7f + t * 0.6f) * unit * (10f + 8f * q), y)
-            y += unit * 14f
+        val fx = bx + shift(bx) * 2.4f
+        // 流れる向きに少しふくらむ三日月
+        val bulge = unit * (26f + 18f * q) * (if (i % 2 == 0) 1f else 0.8f)
+        val thick = unit * (20f + 16f * q)
+        val crest = Path()
+        val shadow = Path()
+        val light = Path()
+        var y = -unit * 10f
+        var first = true
+        while (y <= h + unit * 10f) {
+            val v = (y - h / 2) / (h / 2)
+            val xx = fx + bulge * (1f - v * v) + sin(y / (unit * 45f) + i * 1.3f + t * 0.5f) * unit * 4f
+            if (first) {
+                crest.moveTo(xx, y); shadow.moveTo(xx - thick * 0.45f, y); light.moveTo(xx + thick * 0.25f, y)
+                first = false
+            } else {
+                crest.lineTo(xx, y); shadow.lineTo(xx - thick * 0.45f, y); light.lineTo(xx + thick * 0.25f, y)
+            }
+            y += unit * 10f
         }
-        drawPath(path, Color(0xFF5A1424).copy(alpha = 0.22f + 0.25f * q), style = Stroke(unit * (16f + 14f * q), cap = StrokeCap.Round))
-        drawPath(path, Color(0xFFFFC1CB).copy(alpha = 0.18f + 0.12f * q), style = Stroke(unit * (3f + 2f * q), cap = StrokeCap.Round))
-    }
-
-    // 絨毛（粘膜の表面のつぶつぶ）：波に押されて寄り、ふくらみ、ゆらゆら揺れる
-    val gap = unit * 26f
-    var row = 0
-    var gy = gap * 0.5f
-    while (gy < h) {
-        var gx = (if (row % 2 == 0) 0f else gap * 0.5f)
-        while (gx < w + gap) {
-            val jx = gx + (fr(gx * 0.0137f + gy * 0.0071f) - 0.5f) * gap * 0.5f
-            val jy = gy + (fr(gx * 0.0091f + gy * 0.0153f) - 0.5f) * gap * 0.5f
-            val q = squeeze(jx)
-            val sway = sin(t * 1.6f + jx * 0.02f + jy * 0.03f) * unit * 2.5f
-            val cx = jx + shift(jx) + sway
-            val cy = jy + cos(t * 1.3f + jx * 0.025f) * unit * 2f + (jy - h / 2) * 0.05f * q
-            val rr = unit * (6.5f + 3f * q)
-            drawCircle(lerp(Color(0xFFF4A3B0), Color(0xFFB8394F), q * 0.8f), rr, Offset(cx, cy))
-            drawCircle(Color.White.copy(alpha = 0.35f - 0.15f * q), rr * 0.35f, Offset(cx - rr * 0.3f, cy - rr * 0.35f))
-            gx += gap
-        }
-        gy += gap * 0.86f
-        row++
+        // 影 → ひだの本体 → 光の当たる稜線、で立体的に
+        drawPath(shadow, Color(0xFF4A0E1C).copy(alpha = 0.45f + 0.2f * q), style = Stroke(thick * 0.9f, cap = StrokeCap.Round))
+        drawPath(crest, lerp(Color(0xFFE88C9A), Color(0xFFC24A60), q * 0.7f), style = Stroke(thick, cap = StrokeCap.Round))
+        drawPath(crest, Color(0xFFD06A7C).copy(alpha = 0.6f), style = Stroke(thick * 0.55f, cap = StrokeCap.Round))
+        drawPath(light, Color(0xFFFFD3DA).copy(alpha = 0.55f), style = Stroke(unit * 3f, cap = StrokeCap.Round))
+        // ひだの表面の細かいしわ
+        drawPath(crest, Color(0xFF8E2236).copy(alpha = 0.25f), style = Stroke(unit * 1.2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(unit * 6f, unit * 9f), t * unit * 4f)))
     }
 
     // 内容物・粘液の粒（波のところで速く流れる）
@@ -426,13 +422,21 @@ fun DrawScope.drawBloodCell(c: Offset, rr: Float, unit: Float) {
 // 腸の中にある物（家具）
 // ─────────────────────────────────────────────
 
-/** 悪性腫瘍：ぼこぼこした塊。脈打ち、攻撃されると小さくなる */
+/** 悪性腫瘍：ぼこぼこした塊。脈打ち、上ではねられるとぶよっとつぶれる（トランポリン） */
 fun DrawScope.drawTumor(f: FurnitureBody, r: Float, t: Float, unit: Float) {
-    val k = 0.35f + 0.65f * f.state
     val pulse = 1f + 0.05f * sin(t * 3.2f + f.fx)
-    val hit = (f.active / 0.4f).coerceIn(0f, 1f)
+    val hit = (f.active / 0.5f).coerceIn(0f, 1f)
     val c = Offset(f.x, f.y)
-    val base = r * 1.05f * k * pulse
+    val base = r * 1.05f * pulse
+    // はねられた時のつぶれ（下を支点に）
+    val squash = hit * hit
+    val bottom = Offset(c.x, c.y + base)
+    withTransform({ scale(1f + 0.18f * squash, 1f - 0.28f * squash, bottom) }) {
+        drawTumorBody(c, base, t, unit, squash)
+    }
+}
+
+private fun DrawScope.drawTumorBody(c: Offset, base: Float, t: Float, unit: Float, hit: Float) {
     // 栄養を取る血管
     for (i in 0 until 6) {
         val a = i * 1.047f + 0.3f
@@ -457,7 +461,6 @@ fun DrawScope.drawTumor(f: FurnitureBody, r: Float, t: Float, unit: Float) {
         drawOval(Color(0xFFFFEB3B), Offset(e.x - base * 0.1f, e.y - base * 0.06f * (1f - hit * 0.8f)), Size(base * 0.2f, base * 0.12f * (1f - hit * 0.8f)))
         drawCircle(Color.Black, base * 0.035f, e)
     }
-    if (hit > 0f) drawCircle(Color.White.copy(alpha = 0.35f * hit), base * 1.1f, c)
 }
 
 /** 食べ物（消化中のかたまり）：食べられると小さくなる */
