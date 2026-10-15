@@ -10,7 +10,7 @@
 [![Latest release](https://img.shields.io/github/v/release/72no6495/Wonderfullauncher?label=download)](https://github.com/72no6495/Wonderfullauncher/releases/latest)
 ![Android 8.0+](https://img.shields.io/badge/Android-8.0%2B-ff71ce)
 ![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-01cdfe)
-[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-b967ff)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-b967ff)](LICENSE)
 
 </div>
 
@@ -220,16 +220,7 @@ app/src/main/java/com/wonderful/launcher/
 
 ## 📄 ライセンス
 
-[PolyForm Noncommercial License 1.0.0](LICENSE) で公開しています（オープンソースではなく「ソース公開」のライセンスです）。
-
-| | |
-|---|---|
-| ✅ できること | 個人での利用、学習・研究、趣味での改造、非営利の団体・学校での利用、非営利での再配布（ライセンス文と `Required Notice:` の行を必ず一緒に配ること） |
-| ❌ できないこと | お金を稼ぐ目的での利用（有料での販売・配布、広告収入を得るアプリへの組み込み、会社の業務での利用など） |
-
-商用で利用したい場合は、作者に連絡して別途許可（ライセンス）を受けてください。
-
-> v1.1.1 までのコードは MIT License で公開していました。その時点で入手されたコピーには MIT の条件が引き続き適用されます。
+[MIT License](LICENSE) で公開しています。自由に使用・改変・再配布できます（著作権表示とライセンス文を含めてください）。
 
 <div align="center">
 
