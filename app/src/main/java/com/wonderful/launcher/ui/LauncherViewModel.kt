@@ -259,6 +259,15 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         return ok
     }
 
+    /** ウィジェットの家具の大きさを自由に変える（dp） */
+    fun setFurnitureSize(id: String, wDp: Float, hDp: Float) = store.update { d ->
+        d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(wDp = wDp.coerceIn(48f, 2000f), hDp = hDp.coerceIn(48f, 2000f), scale = 1f) else it })
+    }
+
+    fun resetFurnitureSize(id: String) = store.update { d ->
+        d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(wDp = 0f, hDp = 0f, scale = 1f) else it })
+    }
+
     fun setFurnitureScale(id: String, scale: Float) = store.update { d ->
         d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(scale = scale.coerceIn(0.4f, 3f)) else it })
     }

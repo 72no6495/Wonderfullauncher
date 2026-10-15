@@ -570,6 +570,9 @@ data class FurnitureItem(
     val photo: String = "",
     /** ウィジェット */
     val widget: WidgetItem? = null,
+    /** ウィジェットの大きさ（dp）。0 ならウィジェットの標準の大きさ */
+    val wDp: Float = 0f,
+    val hDp: Float = 0f,
 )
 
 const val MAX_PETS = 10

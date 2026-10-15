@@ -308,6 +308,7 @@ private fun PetRoom(
             withContext(Dispatchers.IO) { PetPhotos.load(context, name) }?.let { photos[name] = it.asImageBitmap() }
         }
     }
+    val resizing = remember { mutableStateMapOf<String, Pair<Float, Float>>() }
     // 片付けた家具が選ばれたままにならないように
     if (selectedId != null && roomFurniture.none { it.id == selectedId }) selectedId = null
 
@@ -558,10 +559,11 @@ private fun PetRoom(
         }
 
         // ── 家具として置いたウィジェット（本物のウィジェットを上に重ねる） ──
+        // 角をドラッグして大きさを変えている途中の大きさ（px）
         roomFurniture.filter { it.kind == FurnitureKind.WIDGET && it.widget != null }.forEach { item ->
             key(item.id) {
                 val w = item.widget!!
-                val (wPx, hPx) = widgetSizePx(item, unit)
+                val (wPx, hPx) = resizing[item.id] ?: widgetSizePx(item, unit)
                 val wDp = (wPx / unit).toInt()
                 val hDp = (hPx / unit).toInt()
                 val shape = RoundedCornerShape(if (theme == PetTheme.VAPOR) 6.dp else 16.dp)
@@ -634,8 +636,47 @@ private fun PetRoom(
                         )
                     }
                 }
+                // 選んでいる時は右下の角をドラッグして、幅と高さを自由に変えられる
+                if (editing && item.id == selectedId) {
+                    val handle = 30.dp
+                    Box(
+                        Modifier
+                            .offset {
+                                val b = sim.furniture.firstOrNull { it.id == item.id }
+                                if (frame < 0 || b == null) IntOffset.Zero
+                                else IntOffset((b.x + wPx / 2 - handle.toPx() * 0.6f).roundToInt(), (b.y + hPx / 2 - handle.toPx() * 0.6f).roundToInt())
+                            }
+                            .size(handle)
+                            .clip(RoundedCornerShape(50))
+                            .background(ui.pink)
+                            .border(2.dp, Color.White, RoundedCornerShape(50))
+                            .pointerInput(item.id) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    var cur = resizing[item.id] ?: widgetSizePx(item, unit)
+                                    while (true) {
+                                        val ev = awaitPointerEvent()
+                                        val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!c.pressed) break
+                                        val d = c.positionChange()
+                                        // 真ん中を中心に広がるので、角を指に合わせるには 2 倍
+                                        val minPx = 48f * unit
+                                        cur = (cur.first + d.x * 2f).coerceIn(minPx, sim.right - sim.left) to (cur.second + d.y * 2f).coerceIn(minPx, sim.bottom - sim.top)
+                                        resizing[item.id] = cur
+                                        sim.furniture.firstOrNull { it.id == item.id }?.let { it.solidW = cur.first; it.solidH = cur.second }
+                                        c.consume()
+                                    }
+                                    vm.setFurnitureSize(item.id, cur.first / unit, cur.second / unit)
+                                    sim.sfx(Sfx.PLACE, sim.furniture.firstOrNull { it.id == item.id }?.x ?: 0f, 1.3f, 0.5f)
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) { RetroLabel("⤡", size = 14.sp, color = Color.White, weight = FontWeight.Bold) }
+                }
             }
         }
+        // 保存された大きさが反映されたら、途中の大きさは捨てる
+        LaunchedEffect(roomFurniture) { resizing.clear() }
 
         // ── 選んだ家具のメニュー ──
         val selected = roomFurniture.firstOrNull { it.id == selectedId }
@@ -659,6 +700,7 @@ private fun PetRoom(
                     RetroButton("－", { vm.setFurnitureScale(f.id, f.scale - 0.2f) }, color = ui.cyan)
                     RetroButton("＋", { vm.setFurnitureScale(f.id, f.scale + 0.2f) }, color = ui.cyan)
                     if (f.kind == FurnitureKind.PHOTO) RetroButton("写真を変える", { replacePhotoId = f.id; pickPhoto() }, color = ui.mint)
+                    if (f.kind == FurnitureKind.WIDGET && (f.wDp > 0f || f.scale != 1f)) RetroButton("元の大きさ", { vm.resetFurnitureSize(f.id) }, color = ui.yellow)
                     if (f.kind == FurnitureKind.WIDGET) RetroButton("選び直す", {
                         vm.removeFurniture(f.id)
                         widgetTarget = WidgetTarget.Furniture(room, f.x, f.y)
@@ -718,7 +760,7 @@ private fun PetRoom(
             val hint = when (tool) {
                 Tool.PAT -> "タップ・なぞってなでる / 長押しで起動 / ドラッグで運ぶ"
                 Tool.FOOD -> if (theme == PetTheme.BODY) "タップした所に大腸菌を放す（逃げ回るので追いかけて食べます）" else "タップした所にエサ（なぞるとばらまく）"
-                Tool.FURNITURE -> "下から選んでタップで置く / 家具をタップで大きさ変更 / ドラッグで移動 / 長押しで片付け"
+                Tool.FURNITURE -> "下から選んでタップで置く / 家具をタップで大きさ変更（ウィジェットは角の⤡で自由に） / ドラッグで移動 / 長押しで片付け"
             }
             if (cfg.showHints) Pill(theme, alpha = 0.75f) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1155,6 +1197,8 @@ private fun SheetHeader(title: String, onClose: () -> Unit) {
 /** 家具にしたウィジェットの大きさ（px）。ウィジェット画面の 1 マス = 40dp を基準に、家具の大きさをかける */
 fun widgetSizePx(item: com.wonderful.launcher.data.FurnitureItem, density: Float): Pair<Float, Float> {
     val w = item.widget ?: return 0f to 0f
+    // 自由に大きさを変えていたらその大きさ
+    if (item.wDp > 0f && item.hDp > 0f) return (item.wDp * density * item.scale) to (item.hDp * density * item.scale)
     val cell = 40f * density * item.scale
     return (w.w * cell) to (w.h * cell)
 }

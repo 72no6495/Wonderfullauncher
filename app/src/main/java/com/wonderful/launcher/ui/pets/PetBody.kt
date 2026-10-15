@@ -232,7 +232,7 @@ fun DrawScope.drawPhage(p: Pet, sim: PetSim, icon: ImageBitmap?, tint: Color, lo
             val eyeC = Offset(hc.x, hc.y - headH * 0.12f)
             val eyes = expressiveEyes(look.eyes, p.emote)
             val eyeScale = if (p.emote == Emote.SURPRISED) 1.35f else 1f
-            drawEyePair(eyes, eyeC, er, Offset(p.gazeX, p.gazeY), p.blink, sleeping, joy, t, unit, eyeScale)
+            drawEyePair(eyes, eyeC, er, Offset(p.gazeX, p.gazeY), p.blink, sleeping, joy, t, unit, eyeScale, p.emote)
             if (!sleeping) drawExpression(p.emote, eyeC, er, hc.x, hc.y, headW, t, unit, pair = eyes != com.wonderful.launcher.data.EyeStyle.CYCLOPS)
             else drawNoseBubble(Offset(hc.x + headW * 0.3f, hc.y + headH * 0.05f), er, t, unit, p.seed)
             val hatY = min(eyeTop(eyes, eyeC.y, er, eyeScale), hc.y - headH / 2) - headW * 0.03f

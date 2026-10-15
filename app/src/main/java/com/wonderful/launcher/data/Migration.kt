@@ -181,6 +181,8 @@ object Migration {
                 it.copy(
                     x = it.x.finiteIn(0f, 1f, 0.5f), y = it.y.finiteIn(0f, 1f, 0.5f),
                     scale = it.scale.finiteIn(0.4f, 3f, 1f),
+                    wDp = if (it.wDp > 0f) it.wDp.finiteIn(48f, 2000f, 0f) else 0f,
+                    hDp = if (it.hDp > 0f) it.hDp.finiteIn(48f, 2000f, 0f) else 0f,
                     widget = it.widget?.let(::fix),
                     // ウィジェットの家具なのにウィジェットが無い物は捨てる（下で）
                 )
