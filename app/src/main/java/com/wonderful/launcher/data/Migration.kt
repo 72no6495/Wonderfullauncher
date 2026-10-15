@@ -178,8 +178,14 @@ object Migration {
                 it.copy(fullness = it.fullness.finiteIn(0f, 1f, 0.8f), affection = it.affection.finiteIn(0f, 1f, 0.2f))
             },
             furniture = d.furniture.distinctBy { it.id }.map {
-                it.copy(x = it.x.finiteIn(0f, 1f, 0.5f), y = it.y.finiteIn(0f, 1f, 0.5f))
-            }.groupBy { it.room }.values.flatMap { it.take(MAX_FURNITURE) },
+                it.copy(
+                    x = it.x.finiteIn(0f, 1f, 0.5f), y = it.y.finiteIn(0f, 1f, 0.5f),
+                    scale = it.scale.finiteIn(0.4f, 3f, 1f),
+                    widget = it.widget?.let(::fix),
+                    // ウィジェットの家具なのにウィジェットが無い物は捨てる（下で）
+                )
+            }.filter { it.kind != FurnitureKind.WIDGET || it.widget != null }
+                .groupBy { it.room }.values.flatMap { it.take(MAX_FURNITURE) },
         )
     }
 
@@ -316,13 +322,14 @@ fun LauncherSettings.effective(): LauncherSettings = if (!liteMode) this else co
 )
 
 /** ウィジェット画面・時計の位置・ジェスチャー用のすべてのウィジェット */
-fun LauncherData.allWidgets(): List<WidgetItem> = widgets + listOfNotNull(topWidget) + gestureWidgets.values
+fun LauncherData.allWidgets(): List<WidgetItem> = widgets + listOfNotNull(topWidget) + gestureWidgets.values + furniture.mapNotNull { it.widget }
 
 /** すべてのウィジェットに同じ変換をかける */
 fun LauncherData.mapAllWidgets(f: (WidgetItem) -> WidgetItem): LauncherData = copy(
     widgets = widgets.map(f),
     topWidget = topWidget?.let(f),
     gestureWidgets = gestureWidgets.mapValues { f(it.value) },
+    furniture = furniture.map { item -> item.widget?.let { item.copy(widget = f(it)) } ?: item },
 )
 
 /** 時計の位置に時計を出すか */
@@ -341,4 +348,6 @@ sealed interface WidgetTarget {
     data class Gesture(val slot: String) : WidgetTarget
     /** 既存のウィジェットを作り直す（復元後の再設定） */
     data class Replace(val itemId: String) : WidgetTarget
+    /** 飼育モードの家具として置く（位置は部屋に対する割合） */
+    data class Furniture(val room: PetTheme, val x: Float, val y: Float) : WidgetTarget
 }

@@ -144,9 +144,24 @@ class Pet(val key: String, var x: Float, var y: Float, val seed: Int) {
     var argued = false
     var talkTimer = 0f
     var lastKick = -10f
+    /** エサのどちら側から食べるか（-1 / 1）と、近づけずに止まっていないかの見張り */
+    var foodSide = 1f
+    var bestDist = Float.MAX_VALUE
+    var stuckT = 0f
 }
 
+/** 家具の置き方（画面から渡す）。位置は割合、solidW/H は通り抜けられない大きさ（px, 0 = 通れる） */
+data class FurnitureSpec(
+    val id: String, val kind: FurnitureKind, val x: Float, val y: Float,
+    val scale: Float = 1f, val solidW: Float = 0f, val solidH: Float = 0f, val photo: String = "",
+)
+
 class FurnitureBody(val id: String, val kind: FurnitureKind, var x: Float, var y: Float) {
+    var scale = 1f
+    /** 写真のファイル名 */
+    var photo = ""
+    var solidW = 0f
+    var solidH = 0f
     var vx = 0f
     var vy = 0f
     var spin = 0f
@@ -235,15 +250,21 @@ class PetSim(seed: Int = 7) {
         }
     }
 
-    fun syncFurniture(items: List<Triple<String, FurnitureKind, Pair<Float, Float>>>) {
-        val ids = items.map { it.first }.toSet()
+    fun syncFurniture(items: List<Triple<String, FurnitureKind, Pair<Float, Float>>>) =
+        syncFurnitureSpecs(items.map { (id, kind, pos) -> FurnitureSpec(id, kind, pos.first, pos.second) })
+
+    fun syncFurnitureSpecs(items: List<FurnitureSpec>) {
+        val ids = items.map { it.id }.toSet()
         furniture.removeAll { it.id !in ids }
-        items.forEach { (id, kind, pos) ->
-            val px = left + (right - left) * pos.first
-            val py = top + (bottom - top) * pos.second
-            val f = furniture.firstOrNull { it.id == id }
-            if (f == null) furniture += FurnitureBody(id, kind, px, py)
-            else if (kind != FurnitureKind.BALL) { f.x = px; f.y = py }
+        items.forEach { spec ->
+            val px = left + (right - left) * spec.x
+            val py = top + (bottom - top) * spec.y
+            val f = furniture.firstOrNull { it.id == spec.id } ?: FurnitureBody(spec.id, spec.kind, px, py).also { furniture += it }
+            if (spec.kind != FurnitureKind.BALL) { f.x = px; f.y = py }
+            f.scale = spec.scale
+            f.photo = spec.photo
+            f.solidW = spec.solidW
+            f.solidH = spec.solidH
         }
         // 使っていた家具が消えたら行動をやめる
         pets.forEach { p ->
@@ -303,13 +324,21 @@ class PetSim(seed: Int = 7) {
         pets.filter { hypot(it.x - x, it.y - y) < radius * 1.25f }.minByOrNull { hypot(it.x - x, it.y - y) }
 
     fun furnitureAt(x: Float, y: Float): FurnitureBody? =
-        furniture.filter { hypot(it.x - x, it.y - y) < furnitureRadius(it.kind) * 1.1f }.minByOrNull { hypot(it.x - x, it.y - y) }
+        furniture.filter {
+            if (it.solidW > 0f) abs(it.x - x) < it.solidW / 2 && abs(it.y - y) < it.solidH / 2
+            else hypot(it.x - x, it.y - y) < furnitureRadius(it) * 1.1f
+        }.minByOrNull { hypot(it.x - x, it.y - y) }
+
+    /** 家具の大きさ（px）。置いた時の大きさも反映 */
+    fun furnitureRadius(f: FurnitureBody): Float = furnitureRadius(f.kind) * f.scale
 
     fun furnitureRadius(kind: FurnitureKind): Float = radius * when (kind) {
         FurnitureKind.BALL -> 0.45f
         FurnitureKind.BED, FurnitureKind.SOFA, FurnitureKind.RUG, FurnitureKind.CASTLE, FurnitureKind.TREE, FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> 1.3f
         FurnitureKind.TV, FurnitureKind.TOWER, FurnitureKind.ROCK, FurnitureKind.CHEST -> 0.95f
         FurnitureKind.BOWL, FurnitureKind.SHELL -> 0.6f
+        FurnitureKind.PHOTO -> 1.2f
+        FurnitureKind.WIDGET -> 1.5f
         else -> 0.8f
     }
 
@@ -453,7 +482,7 @@ class PetSim(seed: Int = 7) {
             if (f.kind == FurnitureKind.BALL) {
                 f.x += f.vx * dt
                 f.y += f.vy * dt
-                val r = furnitureRadius(f.kind)
+                val r = furnitureRadius(f)
                 if (f.x < left + r) { f.x = left + r; f.vx = abs(f.vx) * 0.8f }
                 if (f.x > right - r) { f.x = right - r; f.vx = -abs(f.vx) * 0.8f }
                 if (f.y < top + r) { f.y = top + r; f.vy = abs(f.vy) * 0.8f }
@@ -501,10 +530,26 @@ class PetSim(seed: Int = 7) {
         p.moodLength = length
     }
 
+    /** そのエサに向かっている・食べている子の数 */
+    private fun claims(f: Food, except: Pet? = null): Int =
+        pets.count { it !== except && it.targetFood == f.id && (it.mood == Mood.SEEK_FOOD || it.mood == Mood.EAT) }
+
+    /** 1 つのエサを囲めるのは 2 人まで（全員が群がって動けなくならないように） */
+    private fun hasRoom(f: Food, p: Pet? = null) = f.amount > 0f && claims(f, p) < MAX_EATERS
+
+    /** エサのどこに立つか（左右に分かれて食べる） */
+    private fun foodSpot(p: Pet, f: Food): Pair<Float, Float> =
+        (f.x + p.foodSide * radius * 0.85f) to (if (aquarium) f.y - radius * 0.3f else f.y)
+
     private fun goToFood(p: Pet, f: Food) {
         setMood(p, Mood.SEEK_FOOD, 20f)
         p.targetFood = f.id
         p.targetFurniture = null
+        // もう 1 人いたら反対側へ
+        val other = pets.firstOrNull { it !== p && it.targetFood == f.id && (it.mood == Mood.SEEK_FOOD || it.mood == Mood.EAT) }
+        p.foodSide = other?.let { -it.foodSide } ?: if (p.x < f.x) -1f else 1f
+        p.bestDist = Float.MAX_VALUE
+        p.stuckT = 0f
     }
 
     private fun stepPet(p: Pet, dt: Float) {
@@ -637,10 +682,21 @@ class PetSim(seed: Int = 7) {
             Mood.SEEK_FOOD -> {
                 val f = food.firstOrNull { it.id == p.targetFood }
                 if (f == null || f.amount <= 0f) { pickNext(p); return }
-                p.targetX = f.x; p.targetY = if (aquarium) f.y - radius * 0.3f else f.y
+                // 先に 2 人が食べ始めていたら譲る
+                if (pets.count { it !== p && it.targetFood == f.id && it.mood == Mood.EAT } >= MAX_EATERS) { pickNext(p); return }
+                val (sx, sy) = foodSpot(p, f)
+                p.targetX = sx; p.targetY = sy
+                clampTarget(p)
                 val ready = aquarium || f.landed
-                if (ready && hypot(p.x - f.x, p.y - p.targetY) < radius * 0.8f) setMood(p, Mood.EAT, 999f)
-                else if (p.moodTime > p.moodLength) pickNext(p)
+                val dSpot = hypot(p.x - p.targetX, p.y - p.targetY)
+                val dFood = hypot(p.x - f.x, p.y - f.y)
+                // 近づけているか見張る（押し合いで止まったら諦める）
+                if (dSpot < p.bestDist - radius * 0.15f) { p.bestDist = dSpot; p.stuckT = 0f } else p.stuckT += dt
+                when {
+                    ready && (dSpot < radius * 0.6f || dFood < radius * 1.3f) -> setMood(p, Mood.EAT, 999f)
+                    ready && p.stuckT > 2.5f && dFood < radius * 2.2f -> setMood(p, Mood.EAT, 999f)
+                    p.stuckT > 3.5f || p.moodTime > p.moodLength -> { emote(p, Emote.SWEAT, 1.2f, sound = false); pickNext(p, avoidFood = f.id) }
+                }
             }
             Mood.EAT -> {
                 val f = food.firstOrNull { it.id == p.targetFood }
@@ -649,7 +705,7 @@ class PetSim(seed: Int = 7) {
                 if (f != null) {
                     // エサは無くなるまで食べる（お腹いっぱいでも残さない）
                     if (f.amount <= 0f) { finishMeal(p); return }
-                    if (hypot(p.x - f.x, p.y - (if (aquarium) f.y - radius * 0.3f else f.y)) > radius * 1.4f) { goToFood(p, f); return }
+                    if (hypot(p.x - f.x, p.y - (if (aquarium) f.y - radius * 0.3f else f.y)) > radius * 2.4f) { goToFood(p, f); return }
                     val bite = min(f.amount, dt * 0.5f)
                     f.amount -= bite
                     p.fullness = (p.fullness + bite * 0.35f).coerceAtMost(1f)
@@ -683,7 +739,7 @@ class PetSim(seed: Int = 7) {
                 if (ball == null || p.moodTime > p.moodLength) { pickNext(p); return }
                 p.targetX = ball.x; p.targetY = ball.y
                 val d = hypot(p.x - ball.x, p.y - ball.y)
-                if (d < radius + furnitureRadius(ball.kind) && time - p.lastKick > 0.6f) {
+                if (d < radius + furnitureRadius(ball) && time - p.lastKick > 0.6f) {
                     p.lastKick = time
                     // 蹴る
                     val a = atan2(ball.y - p.y, ball.x - p.x) + rnd.range(-0.4f, 0.4f)
@@ -724,8 +780,7 @@ class PetSim(seed: Int = 7) {
         p.joy = 0.7f
         particles += Particle(FxKind.NOTE, p.x, p.y - radius, 10f, -40f, 1.4f, 1f)
         // まだ残っているエサがあれば続けて食べに行く
-        val next = food.filter { it.amount > 0f && pets.none { o -> o !== p && o.targetFood == it.id && o.mood == Mood.EAT } }
-            .minByOrNull { hypot(it.x - p.x, it.y - p.y) }
+        val next = food.filter { hasRoom(it, p) }.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
         if (next != null) { goToFood(p, next); return }
         emote(p, Emote.YUMMY, 1.6f)
         pickNext(p)
@@ -906,16 +961,14 @@ class PetSim(seed: Int = 7) {
         setMood(q, Mood.IDLE, rnd.range(1f, 2.5f))
     }
 
-    private fun pickNext(p: Pet) {
+    private fun pickNext(p: Pet, avoidFood: Int? = null) {
         endWork(p)
         endSocial(p)
-        // エサが残っていたら食べに行く
-        val leftover = food.filter { f -> f.amount > 0f && pets.none { it !== p && it.targetFood == f.id && (it.mood == Mood.EAT || it.mood == Mood.SEEK_FOOD) } }
-            .minByOrNull { hypot(it.x - p.x, it.y - p.y) }
-        if (leftover != null || (p.fullness < 0.6f && food.isNotEmpty())) {
-            val f = leftover ?: food.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
-            if (f != null) { goToFood(p, f); return }
-        }
+        // エサが残っていたら食べに行く（誰も食べていないエサを優先。満員のエサには行かない）
+        val open = food.filter { it.id != avoidFood && hasRoom(it, p) }
+        val leftover = open.filter { claims(it, p) == 0 }.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
+            ?: if (p.fullness < 0.6f) open.minByOrNull { hypot(it.x - p.x, it.y - p.y) } else null
+        if (leftover != null) { goToFood(p, leftover); return }
         if (p.fullness < 0.45f) {
             val bowl = furniture.filter { it.kind == FurnitureKind.BOWL }.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
             if (bowl != null) {
@@ -975,12 +1028,15 @@ class PetSim(seed: Int = 7) {
         FurnitureKind.ROCK -> true
         FurnitureKind.PLANT, FurnitureKind.PALM, FurnitureKind.BUST, FurnitureKind.LAMP -> true
         FurnitureKind.TREE, FurnitureKind.STUMP, FurnitureKind.MUSHROOM, FurnitureKind.TENT, FurnitureKind.SUNFLOWER, FurnitureKind.DOGHOUSE -> true
-        FurnitureKind.BOWL -> false
+        FurnitureKind.PHOTO -> true
+        FurnitureKind.BOWL, FurnitureKind.WIDGET -> false
     }
 
     /** 家具のどこに行くか */
     private fun spotFor(p: Pet, f: FurnitureBody): Pair<Float, Float> = when (f.kind) {
         FurnitureKind.TV -> f.x to f.y + radius * 2.4f
+        // 写真の前で見とれる
+        FurnitureKind.PHOTO -> (f.x + rnd.range(-0.5f, 0.5f) * furnitureRadius(f)) to f.y + furnitureRadius(f) + radius * 1.1f
         // 木陰・テントや小屋の入り口
         FurnitureKind.TREE -> (f.x + (if (p.x < f.x) -1 else 1) * radius * 0.8f) to f.y + radius * 1.3f
         FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> f.x to f.y + radius * 0.9f
@@ -1002,6 +1058,11 @@ class PetSim(seed: Int = 7) {
             FurnitureKind.BALL -> { setMood(p, Mood.PLAY, rnd.range(4f, 8f)); p.targetFurniture = f.id }
             FurnitureKind.TENT, FurnitureKind.DOGHOUSE -> { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id }
             FurnitureKind.TREE, FurnitureKind.STUMP -> { setMood(p, Mood.SIT, rnd.range(4f, 10f)); p.targetFurniture = f.id }
+            FurnitureKind.PHOTO -> {
+                setMood(p, Mood.WATCH, rnd.range(3f, 6f)); p.targetFurniture = f.id
+                p.heading = atan2(f.y - p.y, f.x - p.x)
+                emote(p, listOf(Emote.LOVE, Emote.HAPPY, Emote.SURPRISED, Emote.MUSIC).random(rnd), 1.8f)
+            }
             FurnitureKind.ROCK -> if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id } else { setMood(p, Mood.SIT, rnd.range(3f, 7f)); p.targetFurniture = f.id }
             FurnitureKind.CASTLE, FurnitureKind.CHEST, FurnitureKind.SHELL ->
                 if (aquarium) { setMood(p, Mood.SLEEP, rnd.range(6f, 14f)); f.user = p.key; p.targetFurniture = f.id } else setMood(p, Mood.IDLE, 2f)
@@ -1010,8 +1071,27 @@ class PetSim(seed: Int = 7) {
     }
 
     private fun clampTarget(p: Pet) {
-        p.targetX = p.targetX.coerceIn(left + radius * 0.6f, right - radius * 0.6f)
-        p.targetY = p.targetY.coerceIn(top + radius * 0.6f, (if (aquarium) floorY else bottom) - radius * 0.6f)
+        val (tx, ty) = outOfSolids(p.targetX, p.targetY, radius * 0.9f)
+        p.targetX = tx.coerceIn(left + radius * 0.6f, right - radius * 0.6f)
+        p.targetY = ty.coerceIn(top + radius * 0.6f, (if (aquarium) floorY else bottom) - radius * 0.6f)
+    }
+
+    /** ウィジェットなど通り抜けられない家具の外へ押し出す */
+    private fun outOfSolids(x: Float, y: Float, margin: Float): Pair<Float, Float> {
+        var nx = x
+        var ny = y
+        furniture.forEach { f ->
+            if (f.solidW <= 0f || f.solidH <= 0f) return@forEach
+            val hw = f.solidW / 2 + margin
+            val hh = f.solidH / 2 + margin
+            val dx = nx - f.x
+            val dy = ny - f.y
+            if (abs(dx) < hw && abs(dy) < hh) {
+                if (hw - abs(dx) < hh - abs(dy)) nx = f.x + (if (dx >= 0f) hw else -hw)
+                else ny = f.y + (if (dy >= 0f) hh else -hh)
+            }
+        }
+        return nx to ny
     }
 
     private fun clampPet(p: Pet) {
@@ -1053,6 +1133,8 @@ class PetSim(seed: Int = 7) {
         p.x += p.vx * dt
         p.y += p.vy * dt
         clampPet(p)
+        val (ox, oy) = outOfSolids(p.x, p.y, radius * 0.7f)
+        if (ox != p.x || oy != p.y) { p.x = ox; p.y = oy; clampPet(p) }
 
         // 向き：進んでいる方へゆっくり回る
         if (p.speed > radius * 0.15f) {
@@ -1242,6 +1324,8 @@ class PetSim(seed: Int = 7) {
         /** 目的地へ動く */
         val MOVING = setOf(Mood.WANDER, Mood.SEEK_FOOD, Mood.PLAY, Mood.CURIOUS, Mood.APPROACH, Mood.CHASE, Mood.FLEE, Mood.DANCE, Mood.HUG)
         val FAST = setOf(Mood.SEEK_FOOD, Mood.PLAY, Mood.CHASE, Mood.FLEE)
+        /** 1 つのエサを同時に食べられる数 */
+        const val MAX_EATERS = 2
         val SLEEP_SPOTS = setOf(FurnitureKind.BED, FurnitureKind.RUG, FurnitureKind.TENT, FurnitureKind.DOGHOUSE, FurnitureKind.CASTLE, FurnitureKind.ROCK, FurnitureKind.CHEST, FurnitureKind.SHELL)
         val TALK = listOf("♪", "!", "?", "…", "♥", "☆", "🍙", "⚽", "🌸", "☀", "🌙", "💤", "🍰", "🎵", "😂", "😳", "✨", "🐟", "👀")
 

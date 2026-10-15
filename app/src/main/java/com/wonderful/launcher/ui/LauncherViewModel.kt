@@ -35,6 +35,7 @@ import com.wonderful.launcher.data.MAX_FURNITURE
 import com.wonderful.launcher.data.MAX_PETS
 import com.wonderful.launcher.data.PetEntry
 import com.wonderful.launcher.data.PetTheme
+import com.wonderful.launcher.ui.pets.PetPhotos
 import com.wonderful.launcher.data.WidgetTarget
 import com.wonderful.launcher.data.allWidgets
 import com.wonderful.launcher.data.mapAllWidgets
@@ -249,22 +250,44 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun addFurniture(kind: FurnitureKind, x: Float, y: Float, room: PetTheme): Boolean {
+    fun addFurniture(kind: FurnitureKind, x: Float, y: Float, room: PetTheme, photo: String = ""): Boolean {
         var ok = true
         store.update { d ->
             if (d.furniture.count { it.room == room } >= MAX_FURNITURE) { ok = false; d }
-            else d.copy(furniture = d.furniture + FurnitureItem(UUID.randomUUID().toString(), kind, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f), room))
+            else d.copy(furniture = d.furniture + FurnitureItem(UUID.randomUUID().toString(), kind, x.coerceIn(0f, 1f), y.coerceIn(0f, 1f), room, photo = photo))
         }
         return ok
+    }
+
+    fun setFurnitureScale(id: String, scale: Float) = store.update { d ->
+        d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(scale = scale.coerceIn(0.4f, 3f)) else it })
+    }
+
+    fun setFurniturePhoto(id: String, photo: String) {
+        val old = data.value.furniture.firstOrNull { it.id == id }?.photo
+        store.update { d -> d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(photo = photo) else it }) }
+        if (!old.isNullOrEmpty() && old != photo) PetPhotos.delete(ctx, old)
     }
 
     fun moveFurniture(id: String, x: Float, y: Float) = store.update { d ->
         d.copy(furniture = d.furniture.map { if (it.id == id) it.copy(x = x.coerceIn(0f, 1f), y = y.coerceIn(0f, 1f)) else it })
     }
 
-    fun removeFurniture(id: String) = store.update { d -> d.copy(furniture = d.furniture.filterNot { it.id == id }) }
+    fun removeFurniture(id: String) {
+        data.value.furniture.firstOrNull { it.id == id }?.let(::releaseFurniture)
+        store.update { d -> d.copy(furniture = d.furniture.filterNot { it.id == id }) }
+    }
 
-    fun clearFurniture(room: PetTheme) = store.update { d -> d.copy(furniture = d.furniture.filterNot { it.room == room }) }
+    fun clearFurniture(room: PetTheme) {
+        data.value.furniture.filter { it.room == room }.forEach(::releaseFurniture)
+        store.update { d -> d.copy(furniture = d.furniture.filterNot { it.room == room }) }
+    }
+
+    /** 家具を片付ける時に、ウィジェットの ID と写真のファイルも片付ける */
+    private fun releaseFurniture(f: FurnitureItem) {
+        f.widget?.let { if (it.kind == WidgetKind.SYSTEM) widgets.deleteId(it.appWidgetId) }
+        if (f.photo.isNotEmpty()) PetPhotos.delete(ctx, f.photo)
+    }
 
     /** 設定画面からの「充電アニメーションを試す」 */
     private val _chargePreview = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -438,6 +461,14 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 store.update { it.copy(gestureWidgets = it.gestureWidgets + (target.slot to item)) }
             }
             is WidgetTarget.Replace -> replaceWidgetId(target.itemId, appWidgetId, provider)
+            is WidgetTarget.Furniture -> {
+                var ok = true
+                store.update { d ->
+                    if (d.furniture.count { it.room == target.room } >= MAX_FURNITURE) { ok = false; d }
+                    else d.copy(furniture = d.furniture + FurnitureItem(UUID.randomUUID().toString(), FurnitureKind.WIDGET, target.x.coerceIn(0f, 1f), target.y.coerceIn(0f, 1f), target.room, widget = item))
+                }
+                if (!ok) widgets.deleteId(appWidgetId)
+            }
         }
     }
 

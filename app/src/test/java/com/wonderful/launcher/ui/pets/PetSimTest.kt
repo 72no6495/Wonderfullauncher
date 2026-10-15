@@ -77,6 +77,42 @@ class PetSimTest {
         assertTrue(s.friendship.isNotEmpty())
     }
 
+    @Test
+    fun feedingDoesNotJamEveryone() {
+        for (aq in listOf(false, true)) {
+            val s = sim(aq)
+            s.pets.forEach { it.fullness = 0.1f }
+            // 同じ場所に何度もエサを置く（みんなが群がる状況）
+            repeat(8) { s.dropFood(1000f, 500f) }
+            var t = 0
+            var maxPerFood = 0
+            while (s.food.isNotEmpty() && t < 30 * 120) {
+                s.step(1f / 30f); s.sounds.clear(); t++
+                s.food.forEach { f -> maxPerFood = maxOf(maxPerFood, s.pets.count { it.targetFood == f.id && it.mood == Mood.EAT }) }
+            }
+            assertTrue("food left (aquarium=$aq): ${s.food.size}", s.food.isEmpty())
+            assertTrue("too many eaters: $maxPerFood", maxPerFood <= PetSim.MAX_EATERS)
+            // 食べ終わったら散らばって動き出す
+            repeat(30 * 10) { s.step(1f / 30f); s.sounds.clear() }
+            assertTrue(s.pets.none { it.mood == Mood.SEEK_FOOD || it.mood == Mood.EAT })
+            val moved = s.pets.map { it.x to it.y }
+            repeat(30 * 20) { s.step(1f / 30f); s.sounds.clear() }
+            assertTrue("pets stay frozen", s.pets.zip(moved).count { (p, m) -> dist(p.x, p.y, m.first, m.second) > s.radius } >= 3)
+        }
+    }
+
+    @Test
+    fun petsDoNotWalkIntoSolidFurniture() {
+        val s = sim(false)
+        s.syncFurnitureSpecs(listOf(FurnitureSpec("w", FurnitureKind.WIDGET, 0.5f, 0.5f, solidW = 600f, solidH = 300f)))
+        repeat(30 * 120) {
+            s.step(1f / 30f); s.sounds.clear()
+            s.pets.filter { it.mood != Mood.CARRIED }.forEach { p ->
+                assertTrue("inside widget: ${p.x},${p.y}", !(kotlin.math.abs(p.x - 1000f) < 300f - 1f && kotlin.math.abs(p.y - 500f) < 150f - 1f))
+            }
+        }
+    }
+
     @Test fun roomLongRun() = run(false)
 
     @Test fun aquariumLongRun() = run(true)

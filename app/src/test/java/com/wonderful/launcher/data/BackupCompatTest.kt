@@ -326,6 +326,28 @@ class BackupCompatTest {
     }
 
     @Test
+    fun photoAndWidgetFurnitureRoundTrip() {
+        val w = WidgetItem("w1", WidgetKind.SYSTEM, appWidgetId = 42, provider = "a/.W", w = 4, h = 2)
+        val d0 = LauncherData(
+            furniture = listOf(
+                FurnitureItem("p", FurnitureKind.PHOTO, 0.3f, 0.4f, PetTheme.MEADOW, scale = 9f, photo = "photo_x.jpg"),
+                FurnitureItem("w", FurnitureKind.WIDGET, 0.6f, 0.5f, PetTheme.CASUAL, widget = w),
+                // ウィジェットの家具なのに中身が無い物は捨てる
+                FurnitureItem("broken", FurnitureKind.WIDGET, 0.5f, 0.5f),
+            ),
+        )
+        val d = BackupCodec.decode(BackupCodec.encode(d0))
+        assertEquals(listOf("p", "w"), d.furniture.map { it.id })
+        assertEquals("photo_x.jpg", d.furniture[0].photo)
+        assertEquals(3f, d.furniture[0].scale, 0.001f)
+        // 家具のウィジェットも「すべてのウィジェット」に入る（ID の整理・復元のため）
+        assertTrue(d.allWidgets().any { it.id == "w1" && it.appWidgetId == 42 })
+        val moved = d.mapAllWidgets { it.copy(appWidgetId = 7) }
+        assertEquals(7, moved.furniture.first { it.id == "w" }.widget?.appWidgetId)
+        assertTrue(FurnitureKind.PHOTO.availableIn(PetTheme.AQUARIUM) && FurnitureKind.WIDGET.availableIn(PetTheme.MEADOW))
+    }
+
+    @Test
     fun freeSpotAvoidsOverlap() {
         val ws = listOf(WidgetItem("a", x = 0, y = 0, w = 8, h = 2), WidgetItem("b", x = 0, y = 2, w = 4, h = 2))
         assertEquals(4 to 2, findFreeSpot(ws, 4, 2))

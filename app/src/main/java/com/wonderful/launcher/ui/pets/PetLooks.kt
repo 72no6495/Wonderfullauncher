@@ -46,13 +46,27 @@ fun DrawScope.drawCritterHead(
         drawCircle(Color(0xFFFF8A80).copy(alpha = 0.6f * joy), r * 0.18f, Offset(cx + r * 0.62f, cy + r * 0.25f))
     }
     // 帽子などは目より奥（耳・ヘッドホン）と手前に分けて描く
-    drawAccessory(look.accessory, cx, cy, size, t, unit, seed, behind = true)
     val eyeC = Offset(cx, cy - size * 0.43f)
     val eyes = expressiveEyes(look.eyes, emote)
-    drawEyePair(eyes, eyeC, r, gaze, blink, sleeping, joy, t, unit, scale = if (emote == Emote.SURPRISED) 1.35f else 1f)
+    val eyeScale = if (emote == Emote.SURPRISED) 1.35f else 1f
+    // 帽子は目の一番上（まゆ・まつげ込み）より上にのせる
+    val hatY = eyeTop(eyes, eyeC.y, r, eyeScale) - size * 0.03f
+    drawAccessory(look.accessory, cx, cy, size, t, unit, seed, behind = true, hatY = hatY)
+    drawEyePair(eyes, eyeC, r, gaze, blink, sleeping, joy, t, unit, scale = eyeScale)
     if (!sleeping) drawExpression(emote, eyeC, r, cx, cy, size, t, unit, pair = eyes != EyeStyle.CYCLOPS)
     if (sleeping) drawNoseBubble(Offset(cx + r * 0.55f, cy + r * 0.05f), r, t, unit, seed)
-    drawAccessory(look.accessory, cx, cy, size, t, unit, seed, behind = false)
+    drawAccessory(look.accessory, cx, cy, size, t, unit, seed, behind = false, hatY = hatY)
+}
+
+/** 目（まゆ・まつげも含む）の一番上の y */
+fun eyeTop(style: EyeStyle, eyeY: Float, r: Float, scale: Float = 1f): Float {
+    val er = r * 0.22f * scale
+    return eyeY - er * when (style) {
+        EyeStyle.CYCLOPS -> 1.95f
+        EyeStyle.SPIDER -> 1.3f
+        EyeStyle.SHADES -> 1.0f
+        else -> 1.7f // つり目・かなしい眉・キラキラのまつげまで入る高さ
+    }
 }
 
 /** 気持ちによって目を変える（サングラスやクモの目はそのまま） */
@@ -269,7 +283,7 @@ fun DrawScope.drawStar(c: Offset, r: Float, fill: Color, outline: Color?, unit: 
 // 頭の飾り
 // ─────────────────────────────────────────────
 
-fun DrawScope.drawAccessory(a: Accessory, cx: Float, cy: Float, size: Float, t: Float, unit: Float, seed: Int, behind: Boolean) {
+fun DrawScope.drawAccessory(a: Accessory, cx: Float, cy: Float, size: Float, t: Float, unit: Float, seed: Int, behind: Boolean, hatY: Float = cy - size * 0.64f) {
     val top = cy - size / 2
     val sw = unit * 1.5f
     when (a) {
@@ -315,14 +329,14 @@ fun DrawScope.drawAccessory(a: Accessory, cx: Float, cy: Float, size: Float, t: 
             drawCircle(Brush.radialGradient(listOf(Color.White, Color(0xFFFF4081)), tip - Offset(size * 0.02f, size * 0.02f), size * 0.08f), size * 0.07f, tip)
         }
         Accessory.HALO -> if (behind) {
-            val y = top - size * 0.22f + sin(t * 2f + seed) * size * 0.03f
+            val y = hatY - size * 0.14f + sin(t * 2f + seed) * size * 0.03f
             val tl = Offset(cx - size * 0.3f, y - size * 0.08f)
             drawOval(Color(0x55FFF59D), tl - Offset(size * 0.05f, size * 0.04f), Size(size * 0.7f, size * 0.24f), style = Stroke(size * 0.08f))
             drawOval(Color(0xFFFFD54F), tl, Size(size * 0.6f, size * 0.16f), style = Stroke(size * 0.04f))
         }
         Accessory.TOPHAT -> if (!behind) {
-            val base = Offset(cx - size * 0.1f, top - size * 0.06f)
-            rotate(-10f, base) {
+            val base = Offset(cx - size * 0.06f, hatY)
+            rotate(-8f, base) {
                 drawRoundRect(Color(0xFF212121), Offset(base.x - size * 0.28f, base.y - size * 0.05f), Size(size * 0.56f, size * 0.08f), CornerRadius(size * 0.04f))
                 drawRect(Color(0xFF212121), Offset(base.x - size * 0.18f, base.y - size * 0.42f), Size(size * 0.36f, size * 0.38f))
                 drawRect(Color(0xFFD32F2F), Offset(base.x - size * 0.18f, base.y - size * 0.14f), Size(size * 0.36f, size * 0.08f))
@@ -330,7 +344,7 @@ fun DrawScope.drawAccessory(a: Accessory, cx: Float, cy: Float, size: Float, t: 
             }
         }
         Accessory.CROWN -> if (!behind) {
-            val by = top - size * 0.05f
+            val by = hatY
             val w = size * 0.5f
             val h = size * 0.26f
             val path = Path().apply {
@@ -353,8 +367,8 @@ fun DrawScope.drawAccessory(a: Accessory, cx: Float, cy: Float, size: Float, t: 
             if (tw < 0.4f) drawStar(Offset(cx + w * 0.3f, by - h * 0.9f), size * 0.08f * sin(tw / 0.4f * PI.toFloat()), Color.White, null, unit)
         }
         Accessory.PARTY -> if (!behind) {
-            val base = Offset(cx + size * 0.08f, top - size * 0.04f)
-            rotate(14f, base) {
+            val base = Offset(cx + size * 0.06f, hatY)
+            rotate(12f, base) {
                 val path = Path().apply {
                     moveTo(base.x - size * 0.19f, base.y)
                     lineTo(base.x, base.y - size * 0.5f)
@@ -368,8 +382,8 @@ fun DrawScope.drawAccessory(a: Accessory, cx: Float, cy: Float, size: Float, t: 
             }
         }
         Accessory.FLOWER -> if (!behind) {
-            val c = Offset(cx - size * 0.36f, top + size * 0.02f)
-            val pr = size * 0.075f
+            val c = Offset(cx - size * 0.44f, top + size * 0.06f)
+            val pr = size * 0.07f
             for (i in 0 until 5) {
                 val ang = (i * 72f + t * 10f) * PI.toFloat() / 180f
                 drawCircle(Color(0xFFF8BBD0), pr, Offset(c.x + cos(ang) * pr * 1.1f, c.y + sin(ang) * pr * 1.1f))
@@ -377,8 +391,8 @@ fun DrawScope.drawAccessory(a: Accessory, cx: Float, cy: Float, size: Float, t: 
             drawCircle(Color(0xFFFFD54F), pr * 0.75f, c)
         }
         Accessory.RIBBON -> if (!behind) {
-            val c = Offset(cx + size * 0.36f, top + size * 0.04f)
-            val s = size * 0.16f * (1f + 0.05f * sin(t * 3f + seed))
+            val c = Offset(cx + size * 0.44f, top + size * 0.06f)
+            val s = size * 0.14f * (1f + 0.05f * sin(t * 3f + seed))
             for (side in intArrayOf(-1, 1)) {
                 val bow = Path().apply {
                     moveTo(c.x, c.y)
@@ -392,7 +406,7 @@ fun DrawScope.drawAccessory(a: Accessory, cx: Float, cy: Float, size: Float, t: 
             drawCircle(Color(0xFFC2185B), s * 0.32f, c)
         }
         Accessory.BEANIE -> if (!behind) {
-            val by = top - size * 0.02f
+            val by = hatY + size * 0.02f
             val tl = Offset(cx - size * 0.42f, by - size * 0.36f)
             drawArc(Color(0xFF26A69A), 180f, 180f, true, tl, Size(size * 0.84f, size * 0.72f))
             for (i in 1..3) drawLine(Color.White.copy(alpha = 0.5f), Offset(cx - size * 0.42f + i * size * 0.21f, by - size * 0.3f), Offset(cx - size * 0.42f + i * size * 0.21f, by), sw)

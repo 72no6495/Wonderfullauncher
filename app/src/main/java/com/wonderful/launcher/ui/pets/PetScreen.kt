@@ -87,6 +87,22 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wonderful.launcher.data.Accessory
+import com.wonderful.launcher.data.WidgetTarget
+import com.wonderful.launcher.ui.panels.AddSystemWidget
+import com.wonderful.launcher.ui.panels.WidgetChooser
+import com.wonderful.launcher.ui.panels.WidgetContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.data.EyeStyle
 import com.wonderful.launcher.data.LegColor
@@ -159,7 +175,7 @@ fun roomOf(theme: PetTheme): PetTheme = when (theme) {
 }
 
 @Composable
-fun PetScreen(vm: LauncherViewModel) {
+fun PetScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
     val data by vm.data.collectAsStateWithLifecycle()
     val apps by vm.apps.collectAsStateWithLifecycle()
     val icons by vm.icons.collectAsStateWithLifecycle()
@@ -171,13 +187,16 @@ fun PetScreen(vm: LauncherViewModel) {
             LocalPalette provides petUiPalette(s.pet.theme, base),
             LocalRetroFont provides font,
         ) {
-            PetRoom(vm, data, apps, icons, base)
+            PetRoom(vm, data, apps, icons, base, onAddSystemWidget)
         }
     }
 }
 
 @Composable
-private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInfo>, icons: Map<String, ImageBitmap>, base: RetroPalette) {
+private fun PetRoom(
+    vm: LauncherViewModel, data: LauncherData, apps: List<AppInfo>, icons: Map<String, ImageBitmap>, base: RetroPalette,
+    onAddSystemWidget: AddSystemWidget,
+) {
     val cfg = data.settings.pet
     val theme = cfg.theme
     val ui = LocalPalette.current
@@ -194,6 +213,32 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
     var tool by remember { mutableStateOf(Tool.PAT) }
     var sheet by remember { mutableStateOf(Sheet.NONE) }
     var placeKind by remember { mutableStateOf<FurnitureKind?>(null) }
+    /** 家具モードで選んでいる家具（大きさ変更・片付けのメニュー） */
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    /** 家具として置くウィジェットを選んでいる時の置き場所 */
+    var widgetTarget by remember { mutableStateOf<WidgetTarget?>(null) }
+    val scope = rememberCoroutineScope()
+    // 写真：置く場所 or 差し替える家具を覚えておいてから、写真を選ぶ
+    var pendingPhoto by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var replacePhotoId by remember { mutableStateOf<String?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val pos = pendingPhoto
+        val replace = replacePhotoId
+        pendingPhoto = null
+        replacePhotoId = null
+        if (uri != null) scope.launch {
+            val name = withContext(Dispatchers.IO) { PetPhotos.import(context, uri) }
+            when {
+                name == null -> Toast.makeText(context, "写真を読み込めませんでした", Toast.LENGTH_SHORT).show()
+                replace != null -> vm.setFurniturePhoto(replace, name)
+                pos != null -> if (!vm.addFurniture(FurnitureKind.PHOTO, pos.first, pos.second, roomOf(data.settings.pet.theme), photo = name)) {
+                    PetPhotos.delete(context, name)
+                    Toast.makeText(context, "家具は $MAX_FURNITURE 個までです", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    fun pickPhoto() = photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     var sized by remember { mutableStateOf(false) }
     val room = roomOf(theme)
     val colors = remember(theme, base) { petColors(theme, base) }
@@ -236,9 +281,23 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
             Triple(e.key, (e.fullness - away / (cfg.hungerHours * 3600f)).coerceIn(0f, 1f), e.affection)
         })
     }
-    LaunchedEffect(roomFurniture, sized) {
-        if (sized) sim.syncFurniture(roomFurniture.map { Triple(it.id, it.kind, it.x to it.y) })
+    LaunchedEffect(roomFurniture, sized, unit) {
+        if (sized) sim.syncFurnitureSpecs(roomFurniture.map {
+            val (wPx, hPx) = widgetSizePx(it, unit)
+            FurnitureSpec(it.id, it.kind, it.x, it.y, it.scale, wPx, hPx, it.photo)
+        })
     }
+    // 写真を読み込む（裏で、まだ読んでいない物だけ）
+    val photos = remember { mutableStateMapOf<String, ImageBitmap>() }
+    val photoNames = roomFurniture.mapNotNull { it.photo.takeIf { n -> n.isNotEmpty() } }.toSet()
+    LaunchedEffect(photoNames) {
+        photos.keys.filter { it !in photoNames }.forEach { photos.remove(it) }
+        photoNames.filter { it !in photos }.forEach { name ->
+            withContext(Dispatchers.IO) { PetPhotos.load(context, name) }?.let { photos[name] = it.asImageBitmap() }
+        }
+    }
+    // 片付けた家具が選ばれたままにならないように
+    if (selectedId != null && roomFurniture.none { it.id == selectedId }) selectedId = null
 
     // 離れる時（縦持ち・アプリ起動・画面オフ）に保存
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -278,8 +337,13 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
         }
     }
 
-    BackHandler(enabled = sheet != Sheet.NONE || tool != Tool.PAT) {
-        if (sheet != Sheet.NONE) sheet = Sheet.NONE else { tool = Tool.PAT; placeKind = null }
+    BackHandler(enabled = sheet != Sheet.NONE || tool != Tool.PAT || widgetTarget != null) {
+        when {
+            widgetTarget != null -> widgetTarget = null
+            sheet != Sheet.NONE -> sheet = Sheet.NONE
+            selectedId != null -> selectedId = null
+            else -> { tool = Tool.PAT; placeKind = null }
+        }
     }
 
     val toolNow by rememberUpdatedState(tool)
@@ -357,9 +421,16 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                                 Tool.FURNITURE -> {
                                     val k = placeNow
                                     when {
-                                        fur != null -> Toast.makeText(context, "ドラッグで移動・長押しで片付けます", Toast.LENGTH_SHORT).show()
+                                        // 置いてある家具をタップ → 選ぶ（大きさ変更・片付け）
+                                        fur != null -> { selectedId = if (selectedId == fur.id) null else fur.id; if (hapticNow) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                                        selectedId != null -> selectedId = null
                                         k == null -> Toast.makeText(context, "下から家具を選んでください", Toast.LENGTH_SHORT).show()
                                         furnitureCount >= MAX_FURNITURE -> Toast.makeText(context, "家具は $MAX_FURNITURE 個までです", Toast.LENGTH_SHORT).show()
+                                        k == FurnitureKind.PHOTO -> { pendingPhoto = fraction(start.x, start.y); pickPhoto() }
+                                        k == FurnitureKind.WIDGET -> {
+                                            val (fx, fy) = fraction(start.x, start.y)
+                                            widgetTarget = WidgetTarget.Furniture(roomNow, fx, fy)
+                                        }
                                         else -> {
                                             val (fx, fy) = fraction(start.x, start.y)
                                             vm.addFurniture(k, fx, fy, roomNow)
@@ -433,7 +504,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
             drawPetBackground(theme, base, sim, t, unit)
             val showFurnitureSel = tool == Tool.FURNITURE
             if (theme == PetTheme.AQUARIUM) {
-                sim.furniture.forEach { drawFurniture(it, sim, theme, colors, base, emoji, t, unit, false) }
+                sim.furniture.forEach { drawFurniture(it, sim, theme, colors, base, emoji, t, unit, it.id == selectedId, photos) }
                 sim.food.forEach { drawFood(it, sim, unit) }
                 sim.pets.forEach { p ->
                     val icon = icons[p.key]
@@ -442,9 +513,9 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                 }
             } else {
                 // ラグは床に敷くので先に。他は奥（上）から順に描く
-                sim.furniture.filter { it.kind == FurnitureKind.RUG }.forEach { drawFurniture(it, sim, theme, colors, base, emoji, t, unit, false) }
+                sim.furniture.filter { it.kind == FurnitureKind.RUG }.forEach { drawFurniture(it, sim, theme, colors, base, emoji, t, unit, it.id == selectedId, photos) }
                 val items = ArrayList<Pair<Float, () -> Unit>>()
-                sim.furniture.filter { it.kind != FurnitureKind.RUG }.forEach { f -> items += f.y to { drawFurniture(f, sim, theme, colors, base, emoji, t, unit, false) } }
+                sim.furniture.filter { it.kind != FurnitureKind.RUG }.forEach { f -> items += f.y to { drawFurniture(f, sim, theme, colors, base, emoji, t, unit, f.id == selectedId, photos) } }
                 sim.food.forEach { f -> items += f.y to { drawFood(f, sim, unit) } }
                 sim.pets.forEach { p ->
                     val icon = icons[p.key]
@@ -456,8 +527,8 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                 if (theme == PetTheme.MEADOW) drawMeadowOverlay(t, unit)
             }
             if (showFurnitureSel) {
-                sim.furniture.forEach { f ->
-                    drawCircle(colors.accent.copy(alpha = 0.6f), sim.furnitureRadius(f.kind) * 1.25f, Offset(f.x, f.y), style = androidx.compose.ui.graphics.drawscope.Stroke(unit * 1.5f))
+                sim.furniture.filter { it.kind != FurnitureKind.WIDGET && it.id != selectedId }.forEach { f ->
+                    drawCircle(colors.accent.copy(alpha = 0.6f), sim.furnitureRadius(f) * 1.25f, Offset(f.x, f.y), style = androidx.compose.ui.graphics.drawscope.Stroke(unit * 1.5f))
                 }
             }
             drawParticles(sim, colors, emoji, unit, labelPaint)
@@ -465,6 +536,121 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                 drawPetLabel(p, sim, appMap[p.key]?.label ?: "", cfg.showNames, colors, labelPaint, emoji, unit)
             }
             if (cfg.emotes) sim.pets.forEach { drawEmoteBalloon(it, sim, emoji, colors, unit) }
+        }
+
+        // ── 家具として置いたウィジェット（本物のウィジェットを上に重ねる） ──
+        roomFurniture.filter { it.kind == FurnitureKind.WIDGET && it.widget != null }.forEach { item ->
+            key(item.id) {
+                val w = item.widget!!
+                val (wPx, hPx) = widgetSizePx(item, unit)
+                val wDp = (wPx / unit).toInt()
+                val hDp = (hPx / unit).toInt()
+                val shape = RoundedCornerShape(if (theme == PetTheme.VAPOR) 6.dp else 16.dp)
+                val editing = tool == Tool.FURNITURE
+                Box(
+                    Modifier
+                        .offset {
+                            val b = sim.furniture.firstOrNull { it.id == item.id }
+                            if (frame < 0 || b == null) IntOffset.Zero
+                            else IntOffset((b.x - wPx / 2).roundToInt(), (b.y - hPx / 2).roundToInt())
+                        }
+                        .size(wDp.dp, hDp.dp)
+                        .clip(shape)
+                        .background(
+                            when (theme) {
+                                PetTheme.VAPOR -> ui.panel.copy(alpha = 0.85f)
+                                PetTheme.AQUARIUM -> Color(0x9906324A)
+                                else -> Color.White.copy(alpha = 0.85f)
+                            },
+                        )
+                        .border(if (item.id == selectedId) 3.dp else 1.5.dp, if (item.id == selectedId) ui.pink else ui.cyan.copy(alpha = 0.6f), shape),
+                ) {
+                    WidgetContent(w, vm, wDp, hDp, editing = editing, onAddSystem = onAddSystemWidget)
+                    if (editing) {
+                        // 家具モードの間は、ウィジェットを触らずに動かす・選ぶ・片付ける
+                        Box(
+                            Modifier
+                                .matchParentSize()
+                                .background(if (item.id == selectedId) ui.pink.copy(alpha = 0.12f) else Color.Transparent)
+                                .pointerInput(item.id) {
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown()
+                                        val kind = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                            var r = 1
+                                            while (true) {
+                                                val ev = awaitPointerEvent()
+                                                val c = ev.changes.firstOrNull { it.id == down.id }
+                                                if (c == null || !c.pressed) { r = 1; break }
+                                                if ((c.position - down.position).getDistance() > viewConfiguration.touchSlop) { r = 2; break }
+                                            }
+                                            r
+                                        } ?: 0
+                                        val body = sim.furniture.firstOrNull { it.id == item.id }
+                                        when (kind) {
+                                            0 -> {
+                                                if (hapticNow) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                                body?.let { sim.sfx(Sfx.REMOVE, it.x) }
+                                                vm.removeFurniture(item.id)
+                                                waitForUpOrCancellation()
+                                            }
+                                            1 -> selectedId = if (selectedId == item.id) null else item.id
+                                            else -> if (body != null) {
+                                                while (true) {
+                                                    val ev = awaitPointerEvent()
+                                                    val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                                                    if (!c.pressed) break
+                                                    val d = c.positionChange()
+                                                    body.x = (body.x + d.x).coerceIn(sim.left, sim.right)
+                                                    body.y = (body.y + d.y).coerceIn(sim.top, sim.bottom)
+                                                    c.consume()
+                                                }
+                                                val fx = ((body.x - sim.left) / (sim.right - sim.left)).coerceIn(0f, 1f)
+                                                val fy = ((body.y - sim.top) / (sim.bottom - sim.top)).coerceIn(0f, 1f)
+                                                vm.moveFurniture(item.id, fx, fy)
+                                                sim.sfx(Sfx.PLACE, body.x, 1.2f, 0.6f)
+                                            }
+                                        }
+                                    }
+                                },
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── 選んだ家具のメニュー ──
+        val selected = roomFurniture.firstOrNull { it.id == selectedId }
+        AnimatedVisibility(
+            tool == Tool.FURNITURE && selected != null,
+            Modifier.align(Alignment.BottomStart).windowInsetsPadding(insets).padding(start = 12.dp, bottom = 96.dp),
+            enter = fadeIn() + scaleIn(initialScale = 0.9f),
+            exit = fadeOut(),
+        ) {
+            val shownSel = remember { arrayOfNulls<com.wonderful.launcher.data.FurnitureItem>(1) }
+            if (selected != null) shownSel[0] = selected
+            val f = shownSel[0] ?: return@AnimatedVisibility
+            Card(theme) {
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    RetroLabel("${f.kind.emoji} ${f.kind.label}", size = 13.sp, weight = FontWeight.Bold, color = ui.text)
+                    RetroLabel("${(f.scale * 100).roundToInt()}%", size = 12.sp, color = ui.yellow)
+                    RetroButton("－", { vm.setFurnitureScale(f.id, f.scale - 0.2f) }, color = ui.cyan)
+                    RetroButton("＋", { vm.setFurnitureScale(f.id, f.scale + 0.2f) }, color = ui.cyan)
+                    if (f.kind == FurnitureKind.PHOTO) RetroButton("写真を変える", { replacePhotoId = f.id; pickPhoto() }, color = ui.mint)
+                    if (f.kind == FurnitureKind.WIDGET) RetroButton("選び直す", {
+                        vm.removeFurniture(f.id)
+                        widgetTarget = WidgetTarget.Furniture(room, f.x, f.y)
+                    }, color = ui.mint)
+                    RetroButton("片付ける", {
+                        sim.furniture.firstOrNull { it.id == f.id }?.let { sim.sfx(Sfx.REMOVE, it.x) }
+                        vm.removeFurniture(f.id)
+                        selectedId = null
+                    }, color = ui.pink)
+                }
+            }
         }
 
         // ── 右側の道具 ──
@@ -511,7 +697,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
             val hint = when (tool) {
                 Tool.PAT -> "タップ・なぞってなでる / 長押しで起動 / ドラッグで運ぶ"
                 Tool.FOOD -> "タップした所にエサ（なぞるとばらまく）"
-                Tool.FURNITURE -> "下から選んでタップで置く / ドラッグで移動 / 長押しで片付け"
+                Tool.FURNITURE -> "下から選んでタップで置く / 家具をタップで大きさ変更 / ドラッグで移動 / 長押しで片付け"
             }
             Pill(theme, alpha = 0.75f) { RetroLabel(hint, size = 11.sp, color = ui.text) }
         }
@@ -539,7 +725,7 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(if (sel) ui.pink.copy(alpha = 0.35f) else Color.Transparent)
                                     .border(if (sel) 2.dp else 0.dp, if (sel) ui.pink else Color.Transparent, RoundedCornerShape(12.dp))
-                                    .clickable { placeKind = if (sel) null else k; haptic() }
+                                    .clickable { placeKind = if (sel) null else k; selectedId = null; haptic() }
                                     .padding(horizontal = 8.dp, vertical = 4.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
@@ -605,6 +791,20 @@ private fun PetRoom(vm: LauncherViewModel, data: LauncherData, apps: List<AppInf
                     }
                 }
             }
+        }
+
+        // ── 家具にするウィジェットを選ぶ ──
+        val wt = widgetTarget
+        if (wt != null) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)).clickable(remember { MutableInteractionSource() }, null) { widgetTarget = null })
+            WidgetChooser(
+                title = "家具として置くウィジェット",
+                target = wt,
+                vm = vm,
+                onAddSystem = onAddSystemWidget,
+                onClose = { widgetTarget = null },
+                modifier = Modifier.align(Alignment.Center).windowInsetsPadding(insets).padding(12.dp).widthIn(max = 640.dp).fillMaxWidth(0.85f).fillMaxHeight(),
+            )
         }
     }
 }
@@ -906,4 +1106,11 @@ private fun SheetHeader(title: String, onClose: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) { RetroLabel("✕", size = 18.sp, color = ui.text) }
     }
+}
+
+/** 家具にしたウィジェットの大きさ（px）。ウィジェット画面の 1 マス = 40dp を基準に、家具の大きさをかける */
+fun widgetSizePx(item: com.wonderful.launcher.data.FurnitureItem, density: Float): Pair<Float, Float> {
+    val w = item.widget ?: return 0f to 0f
+    val cell = 40f * density * item.scale
+    return (w.w * cell) to (w.h * cell)
 }

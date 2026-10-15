@@ -454,10 +454,14 @@ enum class FurnitureKind(val label: String, val emoji: String, val aquarium: Boo
     TENT("テント", "⛺", outdoor = true),
     SUNFLOWER("ひまわり", "🌻", outdoor = true),
     DOGHOUSE("小屋", "🛖", outdoor = true),
+    /** 好きな写真（写真立て） */
+    PHOTO("写真", "🖼"),
+    /** 好きなウィジェット */
+    WIDGET("ウィジェット", "🧩"),
 }
 
 /** その部屋（テーマ）に置ける家具か */
-fun FurnitureKind.availableIn(room: PetTheme): Boolean = when (room) {
+fun FurnitureKind.availableIn(room: PetTheme): Boolean = this == FurnitureKind.PHOTO || this == FurnitureKind.WIDGET || when (room) {
     PetTheme.AQUARIUM -> aquarium || this == FurnitureKind.BALL
     PetTheme.MEADOW -> outdoor || this in setOf(FurnitureKind.BALL, FurnitureKind.BOWL, FurnitureKind.RUG, FurnitureKind.ROCK, FurnitureKind.PALM)
     PetTheme.CASUAL, PetTheme.VAPOR -> !aquarium && !outdoor
@@ -541,6 +545,12 @@ data class FurnitureItem(
     val y: Float = 0.5f,
     /** どの部屋に置いたか（カジュアル/ヴェイパーとアクアリウムで別） */
     val room: PetTheme = PetTheme.CASUAL,
+    /** 大きさ（1 = ふつう） */
+    val scale: Float = 1f,
+    /** 写真：アプリ内に保存した画像のファイル名 */
+    val photo: String = "",
+    /** ウィジェット */
+    val widget: WidgetItem? = null,
 )
 
 const val MAX_PETS = 10

@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
@@ -331,8 +332,24 @@ fun DrawScope.drawMeadowOverlay(t: Float, unit: Float) {
 // 家具
 // ─────────────────────────────────────────────
 
-fun DrawScope.drawFurniture(f: FurnitureBody, sim: PetSim, theme: PetTheme, colors: PetColors, p: RetroPalette, emoji: EmojiCache, t: Float, unit: Float, selected: Boolean) {
-    val r = sim.furnitureRadius(f.kind)
+fun DrawScope.drawFurniture(
+    f: FurnitureBody, sim: PetSim, theme: PetTheme, colors: PetColors, p: RetroPalette, emoji: EmojiCache, t: Float, unit: Float, selected: Boolean,
+    photos: Map<String, ImageBitmap> = emptyMap(),
+) {
+    val r = sim.furnitureRadius(f)
+    if (f.kind == FurnitureKind.WIDGET) {
+        // ウィジェット本体は上に重ねて表示するので、ここでは床の影と光だけ
+        val w = f.solidW
+        val h = f.solidH
+        drawRoundRect(colors.shadow, Offset(f.x - w / 2 + unit * 4f, f.y - h / 2 + unit * 8f), Size(w, h), CornerRadius(unit * 16f))
+        if (theme == PetTheme.VAPOR) drawRoundRect(colors.accent.copy(alpha = 0.35f), Offset(f.x - w / 2 - unit * 4f, f.y - h / 2 - unit * 4f), Size(w + unit * 8f, h + unit * 8f), CornerRadius(unit * 18f), style = Stroke(unit * 4f))
+        if (selected) drawRoundRect(colors.accent, Offset(f.x - w / 2 - unit * 6f, f.y - h / 2 - unit * 6f), Size(w + unit * 12f, h + unit * 12f), CornerRadius(unit * 20f), style = Stroke(unit * 3f))
+        return
+    }
+    if (f.kind == FurnitureKind.PHOTO) {
+        drawPhotoFrame(f, r, photos[f.photo], theme, colors, p, emoji, t, unit, selected)
+        return
+    }
     val c = Offset(f.x, f.y)
     if (selected) {
         drawCircle(colors.accent.copy(alpha = 0.25f + 0.15f * sin(t * 6f)), r * 1.35f, c)
@@ -402,6 +419,76 @@ fun DrawScope.drawFurniture(f: FurnitureBody, sim: PetSim, theme: PetTheme, colo
                 drawCircle(Brush.radialGradient(listOf(Color(0x66FFF59D), Color.Transparent), c, r * 3f), r * 3f, c)
             }
         }
+    }
+}
+
+/** 写真立て（テーマごとに額の見た目を変える） */
+private fun DrawScope.drawPhotoFrame(
+    f: FurnitureBody, r: Float, img: ImageBitmap?, theme: PetTheme, colors: PetColors, p: RetroPalette,
+    emoji: EmojiCache, t: Float, unit: Float, selected: Boolean,
+) {
+    val aspect = if (img != null && img.height > 0) img.width.toFloat() / img.height else 1f
+    val long = r * 2.4f
+    val w = if (aspect >= 1f) long else long * aspect
+    val h = if (aspect >= 1f) long / aspect else long
+    val tl = Offset(f.x - w / 2, f.y - h / 2)
+    val tilt = when (theme) { PetTheme.MEADOW -> -4f; PetTheme.CASUAL -> 2f; else -> 0f }
+    rotate(tilt, Offset(f.x, f.y)) {
+        val pad = when (theme) {
+            PetTheme.MEADOW -> r * 0.09f
+            PetTheme.CASUAL -> r * 0.14f
+            else -> r * 0.07f
+        }
+        val bottomPad = if (theme == PetTheme.MEADOW) r * 0.32f else pad
+        val outer = Offset(tl.x - pad, tl.y - pad)
+        val outerSize = Size(w + pad * 2, h + pad + bottomPad)
+        // 影
+        drawRoundRect(Color.Black.copy(alpha = 0.22f), outer + Offset(unit * 3f, unit * 6f), outerSize, CornerRadius(unit * 6f))
+        when (theme) {
+            PetTheme.CASUAL -> {
+                drawRoundRect(Brush.linearGradient(listOf(Color(0xFFA1887F), Color(0xFF6D4C41)), outer, outer + Offset(outerSize.width, outerSize.height)), outer, outerSize, CornerRadius(unit * 4f))
+                drawRect(Color(0xFFEFEBE9), Offset(tl.x - pad * 0.3f, tl.y - pad * 0.3f), Size(w + pad * 0.6f, h + pad * 0.6f))
+            }
+            PetTheme.VAPOR -> {
+                drawRoundRect(colors.accent.copy(alpha = 0.3f), outer - Offset(unit * 4f, unit * 4f), Size(outerSize.width + unit * 8f, outerSize.height + unit * 8f), CornerRadius(unit * 10f), style = Stroke(unit * 6f))
+                drawRoundRect(Color(0xFF1B0B33), outer, outerSize, CornerRadius(unit * 6f))
+            }
+            PetTheme.MEADOW -> drawRect(Color(0xFFFFFDF7), outer, outerSize)
+            PetTheme.AQUARIUM -> drawRoundRect(Color(0x66B2EBF2), outer, outerSize, CornerRadius(r * 0.3f))
+        }
+        val clip = Path().apply {
+            addRoundRect(androidx.compose.ui.geometry.RoundRect(tl.x, tl.y, tl.x + w, tl.y + h, CornerRadius(if (theme == PetTheme.AQUARIUM) r * 0.25f else unit * 2f)))
+        }
+        clipPath(clip) {
+            if (img != null) image(img, f.x, f.y, w, h)
+            else {
+                drawRect(Color(0xFFCFD8DC), tl, Size(w, h))
+                image(emoji.get("🖼", (r * 1.2f).toInt()), f.x, f.y, r * 1.2f, r * 1.2f)
+            }
+            // ガラスの反射
+            drawRect(
+                Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = 0.18f), Color.Transparent), tl, tl + Offset(w, h)),
+                tl, Size(w, h),
+            )
+        }
+        when (theme) {
+            PetTheme.VAPOR -> drawRoundRect(
+                Brush.linearGradient(listOf(p.pink, p.cyan, p.purple), outer, outer + Offset(outerSize.width, outerSize.height)),
+                outer, outerSize, CornerRadius(unit * 6f), style = Stroke(unit * 2.5f),
+            )
+            PetTheme.MEADOW -> {
+                // マスキングテープ
+                rotate(-8f, Offset(f.x, outer.y)) {
+                    drawRect(Color(0x99FFE082), Offset(f.x - r * 0.35f, outer.y - r * 0.12f), Size(r * 0.7f, r * 0.24f))
+                }
+            }
+            PetTheme.AQUARIUM -> {
+                drawRoundRect(Color.White.copy(alpha = 0.7f), outer, outerSize, CornerRadius(r * 0.3f), style = Stroke(unit * 2f))
+                drawCircle(Color.White.copy(alpha = 0.5f), r * 0.08f, Offset(outer.x + r * 0.2f, outer.y + r * 0.2f), style = Stroke(unit))
+            }
+            PetTheme.CASUAL -> Unit
+        }
+        if (selected) drawRoundRect(colors.accent, outer - Offset(unit * 6f, unit * 6f), Size(outerSize.width + unit * 12f, outerSize.height + unit * 12f), CornerRadius(unit * 10f), style = Stroke(unit * 3f))
     }
 }
 

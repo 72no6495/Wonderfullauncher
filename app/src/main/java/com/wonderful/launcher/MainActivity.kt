@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
             val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
             val petMode = landscape && petModeAllowed(s)
             SideEffect { inPetMode = petMode }
-            if (petMode) PetScreen(vm) else HomeScreen(vm, onAddSystemWidget = ::startAddWidget)
+            if (petMode) PetScreen(vm, onAddSystemWidget = ::startAddWidget) else HomeScreen(vm, onAddSystemWidget = ::startAddWidget)
         }
     }
 
