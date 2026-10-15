@@ -94,7 +94,8 @@ class PetSimTest {
             assertTrue("too many eaters: $maxPerFood", maxPerFood <= PetSim.MAX_EATERS)
             // 食べ終わったら散らばって動き出す
             repeat(30 * 10) { s.step(1f / 30f); s.sounds.clear() }
-            assertTrue(s.pets.none { it.mood == Mood.SEEK_FOOD || it.mood == Mood.EAT })
+            // エサはもう無いので、エサに向かったまま止まっている子はいない（エサ皿で食べるのは OK）
+            assertTrue(s.pets.none { it.mood == Mood.SEEK_FOOD || (it.mood == Mood.EAT && it.targetFurniture == null) })
             val moved = s.pets.map { it.x to it.y }
             repeat(30 * 20) { s.step(1f / 30f); s.sounds.clear() }
             assertTrue("pets stay frozen", s.pets.zip(moved).count { (p, m) -> dist(p.x, p.y, m.first, m.second) > s.radius } >= 3)
@@ -139,6 +140,28 @@ class PetSimTest {
             assertTrue(s.pets.any { it.fullness > 0.5f })
             if (legless) assertTrue(s.pets.all { p -> p.legs.all { !it.stepping } })
         }
+    }
+
+    @Test
+    fun petsDoNotAllCrowdOneFurniture() {
+        val s = PetSim(11).apply {
+            radius = 40f; setBounds(0f, 0f, 2000f, 1000f)
+            syncPets((0 until 10).map { Triple("p$it", 1f, 0.5f) })
+            syncFurniture(listOf(Triple("tv", FurnitureKind.TV, 0.5f to 0.2f), Triple("ph", FurnitureKind.PHOTO, 0.2f to 0.5f), Triple("so", FurnitureKind.SOFA, 0.8f to 0.7f)))
+        }
+        var worst = 0
+        var crowdedFrames = 0
+        repeat(30 * 300) { i ->
+            s.step(1f / 30f); s.sounds.clear()
+            s.furniture.forEach { f ->
+                val n = s.pets.count { it.targetFurniture == f.id }
+                worst = maxOf(worst, n - s.capacity(f.kind))
+                // 家具のまわり 3 匹分に、定員より大勢が固まっていないか
+                if (s.pets.count { dist(it.x, it.y, f.x, f.y) < s.radius * 3.5f } > s.capacity(f.kind) + 3) crowdedFrames++
+            }
+        }
+        assertTrue("over capacity by $worst", worst <= 0)
+        assertTrue("crowded frames: $crowdedFrames", crowdedFrames < 30 * 20)
     }
 
     @Test fun roomLongRun() = run(false)

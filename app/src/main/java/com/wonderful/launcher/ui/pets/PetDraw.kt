@@ -667,7 +667,8 @@ fun DrawScope.drawFish(p: Pet, sim: PetSim, icon: ImageBitmap?, fin: Color, look
     // 目（横から見ているので 1 つ）
     if (width > 0.5f) {
         val ec = Offset(p.x + dir * r * 0.55f * width, cy - r * 0.38f)
-        val eye = expressiveEyes(look.eyes, p.emote).let { if (it == EyeStyle.SMILE || it == EyeStyle.HEART || it == EyeStyle.SLEEPY) it else look.eyes }
+        val eye = if (look.eyes == EyeStyle.CYCLOPS) cyclopsInner(p.emote)
+        else expressiveEyes(look.eyes, p.emote).let { if (it == EyeStyle.SMILE || it == EyeStyle.HEART || it == EyeStyle.SLEEPY) it else look.eyes }
         drawEye(eye, ec, r * 0.2f * (if (p.emote == Emote.SURPRISED) 1.35f else 1f), dir.toInt(), Offset(dir * 0.8f, p.gazeY * 0.5f), p.blink, p.mood == Mood.SLEEP, joy, t, unit)
         if (p.mood != Mood.SLEEP) drawExpression(p.emote, ec, r, p.x, cy, size, t, unit, pair = false)
         else drawNoseBubble(Offset(p.x + dir * r * 0.95f, cy + r * 0.05f), r, t, unit, p.seed)

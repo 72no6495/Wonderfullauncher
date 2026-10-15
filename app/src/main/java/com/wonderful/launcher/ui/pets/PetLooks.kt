@@ -52,7 +52,7 @@ fun DrawScope.drawCritterHead(
     // 帽子は目の一番上（まゆ・まつげ込み）より上にのせる
     val hatY = eyeTop(eyes, eyeC.y, r, eyeScale) - size * 0.03f
     drawAccessory(look.accessory, cx, cy, size, t, unit, seed, behind = true, hatY = hatY)
-    drawEyePair(eyes, eyeC, r, gaze, blink, sleeping, joy, t, unit, scale = eyeScale)
+    drawEyePair(eyes, eyeC, r, gaze, blink, sleeping, joy, t, unit, scale = eyeScale, emote = emote)
     if (!sleeping) drawExpression(emote, eyeC, r, cx, cy, size, t, unit, pair = eyes != EyeStyle.CYCLOPS)
     if (sleeping) drawNoseBubble(Offset(cx + r * 0.55f, cy + r * 0.05f), r, t, unit, seed)
     drawAccessory(look.accessory, cx, cy, size, t, unit, seed, behind = false, hatY = hatY)
@@ -71,7 +71,8 @@ fun eyeTop(style: EyeStyle, eyeY: Float, r: Float, scale: Float = 1f): Float {
 
 /** 気持ちによって目を変える（サングラスやクモの目はそのまま） */
 fun expressiveEyes(base: EyeStyle, emote: Emote): EyeStyle {
-    if (base == EyeStyle.SHADES || base == EyeStyle.SPIDER) return base
+    // ひとつ目の子はどんな気持ちでもひとつ目のまま（目の中身だけ変わる → cyclopsInner）
+    if (base == EyeStyle.SHADES || base == EyeStyle.SPIDER || base == EyeStyle.CYCLOPS) return base
     return when (emote) {
         Emote.LOVE -> EyeStyle.HEART
         Emote.HAPPY, Emote.YUMMY, Emote.MUSIC -> if (base == EyeStyle.CYCLOPS) base else EyeStyle.SMILE
@@ -79,6 +80,14 @@ fun expressiveEyes(base: EyeStyle, emote: Emote): EyeStyle {
         Emote.SURPRISED -> if (base == EyeStyle.CYCLOPS) base else EyeStyle.GOOGLY
         else -> base
     }
+}
+
+/** ひとつ目の子の目の中身（ハート・にっこり・ねむそう…） */
+fun cyclopsInner(emote: Emote): EyeStyle = when (emote) {
+    Emote.LOVE -> EyeStyle.HEART
+    Emote.HAPPY, Emote.YUMMY, Emote.MUSIC -> EyeStyle.SMILE
+    Emote.SLEEPY -> EyeStyle.SLEEPY
+    else -> EyeStyle.GOOGLY
 }
 
 /** 表情の足し算（おこ眉・なみだ・汗） */
@@ -133,10 +142,10 @@ fun DrawScope.drawNoseBubble(c: Offset, r: Float, t: Float, unit: Float, seed: I
 // 目
 // ─────────────────────────────────────────────
 
-fun DrawScope.drawEyePair(style: EyeStyle, c: Offset, r: Float, gaze: Offset, blink: Float, sleeping: Boolean, joy: Float, t: Float, unit: Float, scale: Float = 1f) {
+fun DrawScope.drawEyePair(style: EyeStyle, c: Offset, r: Float, gaze: Offset, blink: Float, sleeping: Boolean, joy: Float, t: Float, unit: Float, scale: Float = 1f, emote: Emote = Emote.NONE) {
     val er = r * 0.22f * scale
     when (style) {
-        EyeStyle.CYCLOPS -> drawEye(EyeStyle.GOOGLY, Offset(c.x, c.y - er * 0.2f), er * 1.7f, 1, gaze, blink, sleeping, joy, t, unit)
+        EyeStyle.CYCLOPS -> drawEye(cyclopsInner(emote), Offset(c.x, c.y - er * 0.2f), er * 1.7f, 1, gaze, blink, sleeping, joy, t, unit)
         EyeStyle.SPIDER -> drawSpiderEyes(c, r, gaze, blink, sleeping, unit)
         EyeStyle.SHADES -> drawShades(c, r, er, t, unit, pair = true)
         else -> for (side in intArrayOf(-1, 1)) drawEye(style, Offset(c.x + side * r * 0.3f, c.y), er, side, gaze, blink, sleeping, joy, t, unit)

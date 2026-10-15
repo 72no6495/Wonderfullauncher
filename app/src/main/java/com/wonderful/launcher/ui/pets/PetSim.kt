@@ -594,6 +594,8 @@ class PetSim(seed: Int = 7) {
         p.mood = m
         p.moodTime = 0f
         p.moodLength = length
+        p.bestDist = Float.MAX_VALUE
+        p.stuckT = 0f
     }
 
     /** そのエサに向かっている・食べている子の数 */
@@ -828,9 +830,15 @@ class PetSim(seed: Int = 7) {
                     (f?.kind == FurnitureKind.BALL && hypot(f.x - p.x, f.y - p.y) < radius * 1.5f)
                 // 寝床の近くまで来たら（先客がいて近づけなくても）そこで寝る
                 val nearBed = f != null && p.energy < 0.3f && f.kind in SLEEP_SPOTS && hypot(p.targetX - p.x, p.targetY - p.y) < radius * 1.8f
+                // 混んでいて近づけない時の見張り
+                val dTarget = hypot(p.targetX - p.x, p.targetY - p.y)
+                if (dTarget < p.bestDist - radius * 0.15f) { p.bestDist = dTarget; p.stuckT = 0f } else p.stuckT += dt
+                val stuck = p.stuckT > 2.5f
                 when {
-                    // 家具に着いたら使う
-                    (arrived || nearBed) && p.mood == Mood.WANDER && f != null -> useFurniture(p, f)
+                    // 家具に着いたら使う（混んでいたら近くで使う）
+                    (arrived || nearBed || (stuck && dTarget < radius * 2.5f)) && p.mood == Mood.WANDER && f != null -> useFurniture(p, f)
+                    // 押し合いで進めない → あきらめて別のことをする
+                    stuck && p.stuckT > 3.5f -> pickNext(p)
                     // 眠いのに寝床に着けなかったらその場で寝る
                     p.moodTime > p.moodLength && p.energy < 0.3f -> { endWork(p); setMood(p, Mood.SLEEP, rnd.range(12f, 25f)) }
                     arrived || p.moodTime > p.moodLength ->
@@ -1061,7 +1069,7 @@ class PetSim(seed: Int = 7) {
         }
         // 眠くなったら寝床へ（無ければその場で）
         if (p.energy < 0.22f) {
-            val beds = furniture.filter { it.user == null && it.kind in SLEEP_SPOTS && (aquarium == it.kind.aquarium || it.kind == FurnitureKind.ROCK) }
+            val beds = furniture.filter { it.user == null && it.kind in SLEEP_SPOTS && (aquarium == it.kind.aquarium || it.kind == FurnitureKind.ROCK) && visitors(it, p) < capacity(it.kind) }
             val bed = beds.minByOrNull { hypot(it.x - p.x, it.y - p.y) }
             emote(p, Emote.SLEEPY, 1.6f)
             if (bed != null) {
@@ -1074,7 +1082,8 @@ class PetSim(seed: Int = 7) {
             return
         }
         val r = rnd.nextFloat()
-        val usable = furniture.filter { it.user == null && it.kind.usable(aquarium) }
+        // 満員の家具には行かない（みんなが 1 か所に集まって動けなくならないように）
+        val usable = furniture.filter { it.user == null && it.kind.usable(aquarium) && visitors(it, p) < capacity(it.kind) }
         // 一緒に遊べる相手（仲良しほど選ばれやすい）
         val mates = if (socialEnabled) pets.filter { it !== p && it.partner == null && it.mood in FREE } else emptyList()
         when {
@@ -1083,7 +1092,8 @@ class PetSim(seed: Int = 7) {
                 startSocial(p, q)
             }
             r < 0.5f && usable.isNotEmpty() -> {
-                val f = usable.random(rnd)
+                // 空いていて近い家具ほど選ばれやすい
+                val f = usable.minByOrNull { visitors(it, p) * 0.6f + hypot(it.x - p.x, it.y - p.y) / (right - left) + rnd.nextFloat() * 0.9f }!!
                 setMood(p, Mood.WANDER, 14f)
                 p.targetFurniture = f.id
                 val spot = spotFor(p, f)
@@ -1115,7 +1125,7 @@ class PetSim(seed: Int = 7) {
 
     /** 家具のどこに行くか */
     private fun spotFor(p: Pet, f: FurnitureBody): Pair<Float, Float> = when (f.kind) {
-        FurnitureKind.TV -> f.x to f.y + radius * 2.4f
+        FurnitureKind.TV -> (f.x + rnd.range(-1.6f, 1.6f) * radius) to f.y + radius * 2.4f
         // 写真の前で見とれる
         FurnitureKind.PHOTO -> (f.x + rnd.range(-0.5f, 0.5f) * furnitureRadius(f)) to f.y + furnitureRadius(f) + radius * 1.1f
         // 木陰・テントや小屋の入り口
@@ -1127,7 +1137,19 @@ class PetSim(seed: Int = 7) {
             (f.x + (if (p.x < f.x) -1 else 1) * radius * 1.6f) to f.y + radius * 0.4f
         FurnitureKind.CASTLE, FurnitureKind.ROCK, FurnitureKind.CHEST, FurnitureKind.SHELL ->
             if (aquarium) f.x to f.y - radius * 1.3f else f.x to f.y
-        else -> f.x to f.y
+        // 何人か来る家具は少しずらして並ぶ
+        else -> (f.x + rnd.range(-0.5f, 0.5f) * radius * (capacity(f.kind) - 1)) to f.y
+    }
+
+    /** その家具に向かっている・使っている子の数 */
+    private fun visitors(f: FurnitureBody, except: Pet? = null): Int = pets.count { it !== except && it.targetFurniture == f.id }
+
+    /** 同時に使える数 */
+    fun capacity(kind: FurnitureKind): Int = when (kind) {
+        FurnitureKind.TV, FurnitureKind.RUG -> 3
+        FurnitureKind.PHOTO, FurnitureKind.BALL, FurnitureKind.TREE, FurnitureKind.SOFA, FurnitureKind.PALM,
+        FurnitureKind.CASTLE, FurnitureKind.CORAL, FurnitureKind.SEAWEED, FurnitureKind.BLOODCELL -> 2
+        else -> 1
     }
 
     private fun useFurniture(p: Pet, f: FurnitureBody) {
