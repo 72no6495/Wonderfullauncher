@@ -790,156 +790,23 @@ fun AuroraScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier:
 // ライフゲーム
 // ═════════════════════════════════════════════
 
-/**
- * セル・オートマトン。ルール（B/S）を変えるとコンウェイ以外の世界も作れる。
- */
-class LifeSim(val cols: Int, val rows: Int) {
-    var cells = BooleanArray(cols * rows); private set
-    private var next = BooleanArray(cols * rows)
-    val glow = FloatArray(cols * rows)
-    val age = IntArray(cols * rows)
-    val neighbors = IntArray(cols * rows)
-    private var acc = 0f
-    private var injectAcc = 0f
-    var generation = 0; private set
-    var population = 0; private set
-    private var stale = 0
-    private var lastPop = -1
-    var flash = 0f; private set
-    /** 人口の推移（HUD のグラフ用） */
-    val history = IntArray(120)
-    var historyLen = 0; private set
-    private var birth = BooleanArray(9)
-    private var survive = BooleanArray(9)
-    private val rnd = Random(System.nanoTime())
-    /** タップで置いた場所の波紋 */
-    var rippleX = 0f; var rippleY = 0f; var ripple = 0f
-
-    fun setRule(b: String, s: String) {
-        birth = BooleanArray(9) { b.contains(('0' + it)) }
-        survive = BooleanArray(9) { s.contains(('0' + it)) }
-    }
-
-    fun seed(cfg: LifeConfig) {
-        cells.fill(false); age.fill(0)
-        val d = cfg.density
-        when (cfg.seed) {
-            LifeSeed.RANDOM -> for (i in cells.indices) cells[i] = rnd.nextFloat() < d
-            LifeSeed.SYMMETRIC -> for (r in 0 until rows) for (c in 0 until (cols + 1) / 2) {
-                val v = rnd.nextFloat() < d
-                cells[r * cols + c] = v
-                cells[r * cols + (cols - 1 - c)] = v
-            }
-            LifeSeed.SOUP -> {
-                val cw = cols / 3; val ch = rows / 4
-                for (r in rows / 2 - ch / 2 until rows / 2 + ch / 2) for (c in cols / 2 - cw / 2 until cols / 2 + cw / 2) {
-                    if (r in 0 until rows && c in 0 until cols) cells[r * cols + c] = rnd.nextFloat() < 0.5f
-                }
-            }
-            LifeSeed.GLIDERS -> repeat((cols * rows / 120).coerceAtLeast(3)) {
-                stamp(GLIDER, rnd.nextInt(cols), rnd.nextInt(rows), rnd.nextInt(4), cfg.wrap)
-            }
-            LifeSeed.GUN -> stamp(GOSPER_GUN, 1, rows / 4, 0, cfg.wrap)
-            LifeSeed.R_PENTOMINO -> stamp(R_PENTOMINO, cols / 2, rows / 2, 0, cfg.wrap)
-        }
-        generation = 0; stale = 0; flash = 1f; historyLen = 0
-    }
-
-    /** パターンを置く（rot: 0〜3 で回転） */
-    fun stamp(pattern: List<String>, cx: Int, cy: Int, rot: Int, wrap: Boolean) {
-        for ((dy, line) in pattern.withIndex()) for ((dx, ch) in line.withIndex()) {
-            if (ch != 'O') continue
-            val (ox, oy) = when (rot % 4) { 0 -> dx to dy; 1 -> -dy to dx; 2 -> -dx to -dy; else -> dy to -dx }
-            var c = cx + ox
-            var r = cy + oy
-            if (wrap) { c = ((c % cols) + cols) % cols; r = ((r % rows) + rows) % rows }
-            if (c in 0 until cols && r in 0 until rows) { cells[r * cols + c] = true; glow[r * cols + c] = 1f }
-        }
-    }
-
-    /** タップした場所にランダムな模様を置く */
-    fun touch(c: Int, r: Int, wrap: Boolean) {
-        val patterns = listOf(GLIDER, R_PENTOMINO, ACORN, LWSS, BLOCK_BURST)
-        stamp(patterns[rnd.nextInt(patterns.size)], c, r, rnd.nextInt(4), wrap)
-        ripple = 1f
-    }
-
-    fun update(dt: Float, cfg: LifeConfig): Boolean {
-        flash = max(0f, flash - dt * 2f)
-        ripple = max(0f, ripple - dt * 1.5f)
-        // 消えたセルの残光（afterglow が大きいほど長く残る）
-        val decay = min(1f, dt * (12f - 11f * cfg.afterglow.coerceIn(0f, 1f)))
-        for (i in glow.indices) glow[i] = if (cells[i]) 1f else glow[i] * (1f - decay)
-        if (cfg.injectGliders) {
-            injectAcc += dt
-            if (injectAcc > 3f) { injectAcc = 0f; stamp(GLIDER, rnd.nextInt(cols), rnd.nextInt(rows), rnd.nextInt(4), cfg.wrap) }
-        }
-        acc += dt
-        if (acc < cfg.stepMs / 1000f) return true
-        acc = 0f
-        step(cfg)
-        return true
-    }
-
-    fun step(cfg: LifeConfig) {
-        var pop = 0
-        for (r in 0 until rows) for (c in 0 until cols) {
-            var nbs = 0
-            for (dr in -1..1) for (dc in -1..1) {
-                if (dr == 0 && dc == 0) continue
-                var rr = r + dr
-                var cc = c + dc
-                if (cfg.wrap) { rr = (rr + rows) % rows; cc = (cc + cols) % cols }
-                else if (rr !in 0 until rows || cc !in 0 until cols) continue
-                if (cells[rr * cols + cc]) nbs++
-            }
-            val i = r * cols + c
-            val alive = if (cells[i]) survive[nbs] else birth[nbs]
-            next[i] = alive
-            neighbors[i] = nbs
-            age[i] = if (alive) age[i] + 1 else 0
-            if (alive) pop++
-        }
-        val tmp = cells; cells = next; next = tmp
-        generation++
-        population = pop
-        if (historyLen < history.size) history[historyLen++] = pop
-        else { System.arraycopy(history, 1, history, 0, history.size - 1); history[history.size - 1] = pop }
-        stale = if (abs(pop - lastPop) <= 2) stale + 1 else 0
-        lastPop = pop
-        if (cfg.autoReseed && (stale > 25 || generation > cfg.maxGenerations || pop < cols * rows / 400 + 1)) seed(cfg)
-    }
-
-    companion object {
-        val GLIDER = listOf(".O.", "..O", "OOO")
-        val R_PENTOMINO = listOf(".OO", "OO.", ".O.")
-        val ACORN = listOf(".O.....", "...O...", "OO..OOO")
-        val LWSS = listOf(".O..O", "O....", "O...O", "OOOO.")
-        val BLOCK_BURST = listOf("OO.OO", "O...O", ".....", "O...O", "OO.OO")
-        val GOSPER_GUN = listOf(
-            "........................O...........",
-            "......................O.O...........",
-            "............OO......OO............OO",
-            "...........O...O....OO............OO",
-            "OO........O.....O...OO..............",
-            "OO........O...O.OO....O.O...........",
-            "..........O.....O.......O...........",
-            "...........O...O....................",
-            "............OO......................",
-        )
-    }
-}
-
 @Composable
-fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: Modifier = Modifier) {
+fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: Modifier = Modifier, follow: Boolean = false) {
     val cfg = s.life
     val density = LocalDensity.current
     val hudPaint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE } }
     BoxWithConstraints(modifier.fillMaxSize()) {
         val cellPx = with(density) { cfg.cellDp.dp.toPx() }
-        val cols = (constraints.maxWidth / cellPx).toInt().coerceAtLeast(8)
-        val rows = (constraints.maxHeight / cellPx).toInt().coerceAtLeast(8)
+        // 画面に映るマスの数
+        val viewCols = (constraints.maxWidth / cellPx).toInt().coerceAtLeast(8)
+        val viewRows = (constraints.maxHeight / cellPx).toInt().coerceAtLeast(8)
+        // 追尾モードは画面より広い世界を作り、カメラで一部を映す
+        val world = if (follow) cfg.followWorld.coerceIn(1.5f, 6f) else 1f
+        val cols = if (follow) (viewCols * world).toInt().coerceIn(viewCols, 420) else viewCols
+        val rows = if (follow) (viewRows * world).toInt().coerceIn(viewRows, 420) else viewRows
         val sim = remember(cols, rows) { LifeSim(cols, rows) }
+        // カメラ（画面の真ん中に映す世界のマス）。最初は世界の真ん中＝初期位置
+        val cam = remember(sim) { floatArrayOf(cols / 2f, rows / 2f) }
         val tick = remember { mutableIntStateOf(0) }
         val speed by rememberUpdatedState(s.sceneSpeed())
         val config by rememberUpdatedState(cfg)
@@ -961,7 +828,30 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                     val dt = ((now - last) / 1e9f).coerceIn(0f, 0.1f)
                     last = now
                     // セルの世代は 0.1 秒ごとくらいなので、描き直しは最大 30fps で十分
-                    if (gate.add(dt, if (fps == 0) 30 else min(fps, 30)) && sim.update(gate.consume().coerceAtMost(0.1f) * speed, config)) tick.intValue++
+                    if (gate.add(dt, if (fps == 0) 30 else min(fps, 30))) {
+                        val step = gate.consume().coerceAtMost(0.1f)
+                        sim.update(step * speed, config)
+                        // 一番変化している所を追いかける。落ち着いたら初期位置（世界の真ん中）へ戻る
+                        if (follow) {
+                            val target = sim.hotspot(config.wrap) ?: (sim.cols / 2f to sim.rows / 2f)
+                            val k = min(1f, step * 1.2f * config.followSpeed)
+                            fun delta(from: Float, to: Float, n: Int): Float {
+                                var d = to - from
+                                if (config.wrap) { if (d > n / 2f) d -= n; if (d < -n / 2f) d += n }
+                                return d
+                            }
+                            cam[0] += delta(cam[0], target.first, sim.cols) * k
+                            cam[1] += delta(cam[1], target.second, sim.rows) * k
+                            if (config.wrap) {
+                                cam[0] = ((cam[0] % sim.cols) + sim.cols) % sim.cols
+                                cam[1] = ((cam[1] % sim.rows) + sim.rows) % sim.rows
+                            } else {
+                                cam[0] = cam[0].coerceIn(viewCols / 2f, sim.cols - viewCols / 2f)
+                                cam[1] = cam[1].coerceIn(viewRows / 2f, sim.rows - viewRows / 2f)
+                            }
+                        }
+                        tick.intValue++
+                    }
                 }
             }
         }
@@ -969,7 +859,10 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
         LaunchedEffect(sim) {
             WallpaperTouch.taps.collect { pos ->
                 if (!config.touch) return@collect
-                sim.touch((pos.x / cellPx).toInt(), (pos.y / cellPx).toInt(), config.wrap)
+                // 画面の位置 → 世界のマス（追尾モードではカメラの位置を足す）
+                val ox = cam[0] - viewCols / 2f
+                val oy = cam[1] - viewRows / 2f
+                sim.touch(floor(ox + pos.x / cellPx).toInt(), floor(oy + pos.y / cellPx).toInt(), config.wrap)
                 sim.rippleX = pos.x; sim.rippleY = pos.y
                 tick.intValue++
             }
@@ -977,22 +870,34 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
         Canvas(Modifier.fillMaxSize()) {
             tick.intValue
             drawRect(Brush.verticalGradient(listOf(Color(0xFF07000F), p.skyTop)))
+            // カメラの左上（世界のマス単位）。追尾しない時は 0
+            val ox = cam[0] - viewCols / 2f
+            val oy = cam[1] - viewRows / 2f
+            val fx = ox - floor(ox)
+            val fy = oy - floor(oy)
             if (cfg.gridLines) {
                 val gc = p.purple.copy(alpha = 0.18f)
-                for (c in 0..cols) drawLine(gc, Offset(c * cellPx, 0f), Offset(c * cellPx, rows * cellPx), 1f)
-                for (r in 0..rows) drawLine(gc, Offset(0f, r * cellPx), Offset(cols * cellPx, r * cellPx), 1f)
+                for (c in 0..viewCols + 1) drawLine(gc, Offset((c - fx) * cellPx, 0f), Offset((c - fx) * cellPx, size.height), 1f)
+                for (r in 0..viewRows + 1) drawLine(gc, Offset(0f, (r - fy) * cellPx), Offset(size.width, (r - fy) * cellPx), 1f)
             }
             val gap = if (cfg.shape == CellShape.PIXEL) 0f else cellPx * cfg.cellGap.coerceIn(0f, 0.6f)
             val cs = cellPx - gap
             val cell = Size(cs, cs)
             val time = sim.generation * 0.05f
-            for (i in 0 until cols * rows) {
+            val c0 = floor(ox).toInt()
+            val r0 = floor(oy).toInt()
+            val visCols = if (follow) viewCols + 1 else cols
+            val visRows = if (follow) viewRows + 1 else rows
+            for (vr in 0 until visRows) for (vc in 0 until visCols) {
+                var c = c0 + vc
+                var r = r0 + vr
+                if (cfg.wrap) { c = ((c % cols) + cols) % cols; r = ((r % rows) + rows) % rows }
+                else if (c !in 0 until cols || r !in 0 until rows) continue
+                val i = r * cols + c
                 val g = sim.glow[i]
                 if (g < 0.03f) continue
-                val c = i % cols
-                val r = i / cols
-                val x = c * cellPx + gap / 2
-                val y = r * cellPx + gap / 2
+                val x = (vc - fx) * cellPx + gap / 2
+                val y = (vr - fy) * cellPx + gap / 2
                 val alive = sim.cells[i]
                 val color = if (!alive) p.purple else when (cfg.color) {
                     LifeColor.AGE -> when {
@@ -1030,13 +935,13 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                 val rr = (1f - sim.ripple) * cellPx * 12f
                 drawCircle(p.yellow.copy(alpha = sim.ripple), rr, Offset(sim.rippleX, sim.rippleY), style = Stroke(3f))
             }
-            if (cfg.hud) drawLifeHud(sim, cfg, p, hudPaint)
+            if (cfg.hud) drawLifeHud(sim, cfg, p, hudPaint, if (follow) cam else null, viewCols, viewRows)
         }
     }
 }
 
 /** 世代数・人口・ルールと人口グラフ（位置は設定で四隅から選べる） */
-private fun DrawScope.drawLifeHud(sim: LifeSim, cfg: LifeConfig, p: RetroPalette, paint: Paint) {
+private fun DrawScope.drawLifeHud(sim: LifeSim, cfg: LifeConfig, p: RetroPalette, paint: Paint, cam: FloatArray? = null, viewCols: Int = 0, viewRows: Int = 0) {
     val pad = 8.dp.toPx()
     val gw = 120.dp.toPx()
     val gh = 34.dp.toPx()
@@ -1073,5 +978,26 @@ private fun DrawScope.drawLifeHud(sim: LifeSim, cfg: LifeConfig, p: RetroPalette
             if (k == 0) path.moveTo(px, py) else path.lineTo(px, py)
         }
         drawPath(path, p.yellow, style = Stroke(1.5.dp.toPx()))
+    }
+    // 追尾モード：世界の地図（明るい所ほど変化が多い）と、いま映している範囲
+    if (cam != null) {
+        val mw = 72.dp.toPx()
+        val mh = mw * sim.rows / sim.cols.coerceAtLeast(1)
+        val mx = if (left + boxW + mw + pad * 2 < size.width) left + boxW + pad else left - mw - pad
+        val my = top + (boxH - mh) / 2
+        drawRect(Color.Black.copy(alpha = 0.5f), Offset(mx, my), Size(mw, mh))
+        val bw = mw / sim.blocksX
+        val bh = mh / sim.blocksY
+        val maxHeat = sim.heat.maxOrNull()?.coerceAtLeast(1f) ?: 1f
+        for (by in 0 until sim.blocksY) for (bx in 0 until sim.blocksX) {
+            val h = sim.heat[by * sim.blocksX + bx] / maxHeat
+            if (h > 0.05f) drawRect(p.yellow.copy(alpha = 0.2f + 0.7f * h), Offset(mx + bx * bw, my + by * bh), Size(bw + 0.5f, bh + 0.5f))
+        }
+        val vw = mw * viewCols / sim.cols
+        val vh = mh * viewRows / sim.rows
+        val vx = mx + mw * cam[0] / sim.cols - vw / 2
+        val vy = my + mh * cam[1] / sim.rows - vh / 2
+        drawRect(p.cyan, Offset(vx, vy), Size(vw, vh), style = Stroke(1.5.dp.toPx()))
+        drawRect(p.pink.copy(alpha = 0.7f), Offset(mx, my), Size(mw, mh), style = Stroke(1.dp.toPx()))
     }
 }

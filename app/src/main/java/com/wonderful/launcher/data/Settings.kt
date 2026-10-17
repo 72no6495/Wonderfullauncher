@@ -45,6 +45,8 @@ enum class WallpaperType(val label: String, val animated: Boolean = true) {
     LAVA("ラバランプ"),
     AURORA("オーロラ"),
     LIFE("ライフゲーム"),
+    /** ライフゲームの広い世界を、一番変化が起きている所を追いかけて映す */
+    LIFE_FOLLOW("ライフゲーム追尾"),
 }
 
 /** 残像の描き方 */
@@ -118,6 +120,7 @@ enum class LifeSeed(val label: String) {
     GUN("グライダー銃"),
     R_PENTOMINO("Rペントミノ"),
     SOUP("中央に塊"),
+    ACORN("どんぐり"),
 }
 
 // ── 壁紙ごとの詳細設定 ──
@@ -222,6 +225,10 @@ data class LifeConfig(
     val injectGliders: Boolean = false,
     /** 何もない所をタップするとセルを置ける */
     val touch: Boolean = true,
+    /** 追尾モードの世界の広さ（画面の何倍か） */
+    val followWorld: Float = 3f,
+    /** 追尾モードでカメラが追いかける速さ */
+    val followSpeed: Float = 1f,
 )
 
 /** 画面上部（時計の位置）に表示するもの */

@@ -66,6 +66,7 @@ fun WallpaperLayer(settings: LauncherSettings, palette: RetroPalette, paused: Bo
                 WallpaperType.LAVA -> LavaScene(settings, palette, paused, blurMod)
                 WallpaperType.AURORA -> AuroraScene(settings, palette, paused, blurMod)
                 WallpaperType.LIFE -> LifeScene(settings, palette, paused, blurMod)
+                WallpaperType.LIFE_FOLLOW -> LifeScene(settings, palette, paused, blurMod, follow = true)
             }
             if (settings.wallpaperDim > 0f) {
                 Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = settings.wallpaperDim)))

@@ -130,6 +130,8 @@ object Migration {
                 density = s.life.density.finiteIn(0.01f, 0.95f, 0.28f),
                 maxGenerations = s.life.maxGenerations.coerceIn(50, 100000),
                 hudMarginDp = s.life.hudMarginDp.finiteIn(0f, 400f, 130f),
+                followWorld = s.life.followWorld.finiteIn(1.5f, 6f, 3f),
+                followSpeed = s.life.followSpeed.finiteIn(0.2f, 4f, 1f),
             ),
             cornerFloatAmount = s.cornerFloatAmount.finiteIn(0f, 1f, 0.5f),
             cornerFloatSpeed = s.cornerFloatSpeed.finiteIn(0.2f, 3f, 1f),

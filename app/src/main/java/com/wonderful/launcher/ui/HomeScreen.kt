@@ -311,7 +311,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                             runGesture(if (up) GestureSlot.TWO_FINGER_UP else GestureSlot.TWO_FINGER_DOWN)
                         },
                         // 触れる壁紙（ライフゲーム）にタップ位置を渡す
-                        onTapEmpty = if (s.wallpaperType == WallpaperType.LIFE && s.life.touch) {
+                        onTapEmpty = if ((s.wallpaperType == WallpaperType.LIFE || s.wallpaperType == WallpaperType.LIFE_FOLLOW) && s.life.touch) {
                             { pos -> WallpaperTouch.taps.tryEmit(pos) }
                         } else null,
                     )

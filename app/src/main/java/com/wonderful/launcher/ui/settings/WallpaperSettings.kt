@@ -65,6 +65,13 @@ fun WallpaperDetailSettings(s: LauncherSettings, u: SettingsUpdate) {
         WallpaperType.LAVA -> LavaSettings(s.lava) { f -> u { it.copy(lava = f(it.lava)) } }
         WallpaperType.AURORA -> AuroraSettings(s.aurora) { f -> u { it.copy(aurora = f(it.aurora)) } }
         WallpaperType.LIFE -> LifeSettings(s.life) { f -> u { it.copy(life = f(it.life)) } }
+        WallpaperType.LIFE_FOLLOW -> {
+            SectionHeader("追尾カメラ")
+            RetroLabel("広い世界のうち、一番変化が起きている所をカメラが追いかけます。落ち着いたら初期位置（真ん中）に戻ります。初期配置は「Rペントミノ」や「どんぐり」がおすすめ", size = 11.sp, color = LocalPalette.current.text.copy(alpha = 0.7f), maxLines = 4)
+            SliderSetting("世界の広さ", s.life.followWorld, 1.5f..6f, "画面の何倍の広さか（広いほど長く育つが少し重くなる）", format = { "%.1f倍".format(it) }) { v -> u { it.copy(life = it.life.copy(followWorld = v)) } }
+            SliderSetting("カメラの速さ", s.life.followSpeed, 0.2f..4f, format = { "%.1f倍".format(it) }) { v -> u { it.copy(life = it.life.copy(followSpeed = v)) } }
+            LifeSettings(s.life) { f -> u { it.copy(life = f(it.life)) } }
+        }
         WallpaperType.SYSTEM, WallpaperType.IMAGE, WallpaperType.SOLID -> Unit
     }
 }
