@@ -99,4 +99,18 @@ class LifeSimTest {
         val late = s.spread(100f, 100f, false)
         assertTrue("spread should grow: $early -> $late", late > early)
     }
+
+    @Test
+    fun birthFlashStartsBrightAndFades() {
+        val (s, base) = sim(LifeSeed.R_PENTOMINO, 40, 40, wrap = false)
+        val cfg = base.copy(birthFlash = true, birthFlashSec = 1f, stepMs = 100000f)
+        s.step(cfg)
+        val lit = s.born.indices.filter { s.born[it] == 1f }
+        assertTrue("births should light up", lit.isNotEmpty())
+        assertTrue(lit.all { s.cells[it] })
+        s.update(0.5f, cfg)
+        assertTrue(lit.all { kotlin.math.abs(s.born[it] - 0.5f) < 1e-4f })
+        s.update(0.6f, cfg)
+        assertTrue(lit.all { s.born[it] == 0f })
+    }
 }
