@@ -103,6 +103,7 @@ import com.wonderful.launcher.ui.theme.LocalPalette
 import com.wonderful.launcher.ui.theme.RetroTheme
 import com.wonderful.launcher.ui.wallpaper.CrtOverlay
 import com.wonderful.launcher.ui.wallpaper.WallpaperLayer
+import com.wonderful.launcher.ui.wallpaper.rememberMirrorCapture
 import kotlin.math.min
 import kotlin.random.Random
 
@@ -235,6 +236,12 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                 if (s.panelBlur && (panel != Panel.NONE || menuApp != null)) 1f else 0f,
                 tween((350 / s.animSpeed).toInt()), label = "backdrop",
             )
+            // 合わせ鏡：壁紙＋ホームを少し遅れて撮り、次の壁紙にする
+            val mirrorCapture = rememberMirrorCapture(
+                enabled = s.wallpaperType == WallpaperType.MIRROR,
+                paused = panel != Panel.NONE || idle,
+                cfg = s.mirror,
+            )
             Box(
                 Modifier
                     .fillMaxSize()
@@ -243,7 +250,8 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                             val r = backdropBlur * 14.dp.toPx()
                             renderEffect = BlurEffect(r, r, TileMode.Clamp)
                         }
-                    },
+                    }
+                    .then(mirrorCapture),
             ) {
             WallpaperLayer(s, p, paused = panel != Panel.NONE || idle)
 

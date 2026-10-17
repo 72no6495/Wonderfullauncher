@@ -1,6 +1,7 @@
 package com.wonderful.launcher.ui.wallpaper
 
 import com.wonderful.launcher.data.LifeConfig
+import com.wonderful.launcher.data.LifeInject
 import com.wonderful.launcher.data.LifeSeed
 import kotlin.math.max
 import kotlin.math.min
@@ -103,7 +104,17 @@ class LifeSim(val cols: Int, val rows: Int) {
         for (i in glow.indices) glow[i] = if (cells[i]) 1f else glow[i] * (1f - decay)
         if (cfg.injectGliders) {
             injectAcc += dt
-            if (injectAcc > 3f) { injectAcc = 0f; stamp(GLIDER, rnd.nextInt(cols), rnd.nextInt(rows), rnd.nextInt(4), cfg.wrap) }
+            if (injectAcc > cfg.injectEverySec.coerceAtLeast(0.5f)) {
+                injectAcc = 0f
+                val pattern = when (cfg.injectPattern) {
+                    LifeInject.GLIDER -> GLIDER
+                    LifeInject.LWSS -> LWSS
+                    LifeInject.R_PENTOMINO -> R_PENTOMINO
+                    LifeInject.ACORN -> ACORN
+                    LifeInject.RANDOM -> listOf(GLIDER, LWSS, R_PENTOMINO, ACORN, BLOCK_BURST)[rnd.nextInt(5)]
+                }
+                stamp(pattern, rnd.nextInt(cols), rnd.nextInt(rows), rnd.nextInt(4), cfg.wrap)
+            }
         }
         acc += dt
         if (acc < cfg.stepMs / 1000f) return true
@@ -138,6 +149,16 @@ class LifeSim(val cols: Int, val rows: Int) {
         changed = nChanged
         for (b in heat.indices) heat[b] = heat[b] * 0.82f + changes[b]
         val tmp = cells; cells = next; next = tmp
+        // 突然変異：ランダムなセルを反転させる（止まりかけた世界がまた動き出す）
+        if (cfg.mutation > 0f) {
+            val n = (cols * rows * cfg.mutation / 100f).let { it.toInt() + if (rnd.nextFloat() < it % 1f) 1 else 0 }
+            repeat(n) {
+                val i = rnd.nextInt(cells.size)
+                cells[i] = !cells[i]
+                age[i] = if (cells[i]) 1 else 0
+                if (cells[i]) { pop++; glow[i] = 1f } else pop--
+            }
+        }
         generation++
         population = pop
         if (historyLen < history.size) history[historyLen++] = pop
@@ -175,6 +196,28 @@ class LifeSim(val cols: Int, val rows: Int) {
         }
         if (best < 6f) return null
         return (bx * block + block / 2f) to (by * block + block / 2f)
+    }
+
+    /**
+     * (cx, cy) から見て、変化がどのくらい広がっているか（セル単位の半径）。
+     * 追尾カメラの自動ズームに使う
+     */
+    fun spread(cx: Float, cy: Float, wrap: Boolean): Float {
+        var sum = 0f
+        var acc = 0f
+        for (y in 0 until blocksY) for (x in 0 until blocksX) {
+            val h = heat[y * blocksX + x]
+            if (h < 0.5f) continue
+            var dx = x * block + block / 2f - cx
+            var dy = y * block + block / 2f - cy
+            if (wrap) {
+                if (dx > cols / 2f) dx -= cols; if (dx < -cols / 2f) dx += cols
+                if (dy > rows / 2f) dy -= rows; if (dy < -rows / 2f) dy += rows
+            }
+            sum += h
+            acc += h * (dx * dx + dy * dy)
+        }
+        return if (sum <= 0f) 0f else kotlin.math.sqrt(acc / sum)
     }
 
     companion object {

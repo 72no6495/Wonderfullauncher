@@ -132,6 +132,9 @@ object Migration {
                 hudMarginDp = s.life.hudMarginDp.finiteIn(0f, 400f, 130f),
                 followWorld = s.life.followWorld.finiteIn(1.5f, 6f, 3f),
                 followSpeed = s.life.followSpeed.finiteIn(0.2f, 4f, 1f),
+                mutation = s.life.mutation.finiteIn(0f, 2f, 0f),
+                injectEverySec = s.life.injectEverySec.finiteIn(0.5f, 30f, 3f),
+                glowSize = s.life.glowSize.finiteIn(0.3f, 3f, 1f),
             ),
             cornerFloatAmount = s.cornerFloatAmount.finiteIn(0f, 1f, 0.5f),
             cornerFloatSpeed = s.cornerFloatSpeed.finiteIn(0.2f, 3f, 1f),
@@ -146,6 +149,13 @@ object Migration {
             lava = s.lava.copy(blobs = s.lava.blobs.coerceIn(1, 20)),
             aurora = s.aurora.copy(ribbons = s.aurora.ribbons.coerceIn(1, 8)),
             vapor = s.vapor.copy(starCount = s.vapor.starCount.coerceIn(0, 500), horizon = s.vapor.horizon.finiteIn(0.3f, 0.85f, 0.62f)),
+            mirror = s.mirror.copy(
+                delaySec = s.mirror.delaySec.finiteIn(0.04f, 2f, 0.12f),
+                shrink = s.mirror.shrink.finiteIn(0.5f, 0.97f, 0.86f),
+                rotation = s.mirror.rotation.finiteIn(-30f, 30f, 0f),
+                darken = s.mirror.darken.finiteIn(0f, 0.6f, 0.12f),
+                wobble = s.mirror.wobble.finiteIn(0f, 1f, 0f),
+            ),
             pet = s.pet.copy(
                 speed = s.pet.speed.finiteIn(0.2f, 3f, 1f),
                 scale = s.pet.scale.finiteIn(0.5f, 2f, 1f),

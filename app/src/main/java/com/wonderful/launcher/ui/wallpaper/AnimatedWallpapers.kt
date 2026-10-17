@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.snapshotFlow
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.max
@@ -805,13 +806,17 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
         val cols = if (follow) (viewCols * world).toInt().coerceIn(viewCols, 420) else viewCols
         val rows = if (follow) (viewRows * world).toInt().coerceIn(viewRows, 420) else viewRows
         val sim = remember(cols, rows) { LifeSim(cols, rows) }
-        // カメラ（画面の真ん中に映す世界のマス）。最初は世界の真ん中＝初期位置
-        val cam = remember(sim) { floatArrayOf(cols / 2f, rows / 2f) }
+        // カメラ（画面の真ん中に映す世界のマス）と倍率。最初は世界の真ん中＝初期位置
+        val cam = remember(sim) { floatArrayOf(cols / 2f, rows / 2f, 1f) }
+        // 脈打つ演出用の時計（秒）
+        val clock = remember { floatArrayOf(0f) }
         val tick = remember { mutableIntStateOf(0) }
         val speed by rememberUpdatedState(s.sceneSpeed())
         val config by rememberUpdatedState(cfg)
         val isPaused by rememberUpdatedState(paused)
         val fps by rememberUpdatedState(LocalFpsLimit.current)
+        // 一番引いた時でも世界の外が映らない倍率
+        val minZoom = if (follow) max(viewCols.toFloat() / cols, viewRows.toFloat() / rows).coerceAtLeast(0.5f) else 1f
         // ルールや初期配置を変えたら作り直す
         LaunchedEffect(sim, cfg.rule) { sim.setRule(cfg.rule.birth, cfg.rule.survive) }
         LaunchedEffect(sim, cfg.seed, cfg.density) { sim.seed(cfg) }
@@ -830,10 +835,12 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                     // セルの世代は 0.1 秒ごとくらいなので、描き直しは最大 30fps で十分
                     if (gate.add(dt, if (fps == 0) 30 else min(fps, 30))) {
                         val step = gate.consume().coerceAtMost(0.1f)
+                        clock[0] += step * speed
                         sim.update(step * speed, config)
                         // 一番変化している所を追いかける。落ち着いたら初期位置（世界の真ん中）へ戻る
                         if (follow) {
-                            val target = sim.hotspot(config.wrap) ?: (sim.cols / 2f to sim.rows / 2f)
+                            val hot = sim.hotspot(config.wrap)
+                            val target = hot ?: (sim.cols / 2f to sim.rows / 2f)
                             val k = min(1f, step * 1.2f * config.followSpeed)
                             fun delta(from: Float, to: Float, n: Int): Float {
                                 var d = to - from
@@ -842,12 +849,20 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                             }
                             cam[0] += delta(cam[0], target.first, sim.cols) * k
                             cam[1] += delta(cam[1], target.second, sim.rows) * k
+                            // 自動ズーム：変化が広がったら引き、小さくまとまったら寄る。落ち着いたら等倍へ
+                            val zTarget = if (config.followAutoZoom && hot != null) {
+                                val r = sim.spread(cam[0], cam[1], config.wrap).coerceAtLeast(4f)
+                                (min(viewCols, viewRows) / (r * 3.2f)).coerceIn(minZoom, 1.8f)
+                            } else 1f.coerceAtLeast(minZoom)
+                            cam[2] += (zTarget - cam[2]) * k * 0.5f
+                            val halfW = viewCols / cam[2] / 2f
+                            val halfH = viewRows / cam[2] / 2f
                             if (config.wrap) {
                                 cam[0] = ((cam[0] % sim.cols) + sim.cols) % sim.cols
                                 cam[1] = ((cam[1] % sim.rows) + sim.rows) % sim.rows
                             } else {
-                                cam[0] = cam[0].coerceIn(viewCols / 2f, sim.cols - viewCols / 2f)
-                                cam[1] = cam[1].coerceIn(viewRows / 2f, sim.rows - viewRows / 2f)
+                                cam[0] = cam[0].coerceIn(min(halfW, sim.cols / 2f), max(sim.cols - halfW, sim.cols / 2f))
+                                cam[1] = cam[1].coerceIn(min(halfH, sim.rows / 2f), max(sim.rows - halfH, sim.rows / 2f))
                             }
                         }
                         tick.intValue++
@@ -859,10 +874,11 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
         LaunchedEffect(sim) {
             WallpaperTouch.taps.collect { pos ->
                 if (!config.touch) return@collect
-                // 画面の位置 → 世界のマス（追尾モードではカメラの位置を足す）
-                val ox = cam[0] - viewCols / 2f
-                val oy = cam[1] - viewRows / 2f
-                sim.touch(floor(ox + pos.x / cellPx).toInt(), floor(oy + pos.y / cellPx).toInt(), config.wrap)
+                // 画面の位置 → 世界のマス（追尾モードではカメラの位置と倍率を考える）
+                val cp = cellPx * cam[2]
+                val ox = cam[0] - viewCols * cellPx / cp / 2f
+                val oy = cam[1] - viewRows * cellPx / cp / 2f
+                sim.touch(floor(ox + pos.x / cp).toInt(), floor(oy + pos.y / cp).toInt(), config.wrap)
                 sim.rippleX = pos.x; sim.rippleY = pos.y
                 tick.intValue++
             }
@@ -870,25 +886,27 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
         Canvas(Modifier.fillMaxSize()) {
             tick.intValue
             drawRect(Brush.verticalGradient(listOf(Color(0xFF07000F), p.skyTop)))
+            // 1 マスの大きさ（追尾モードの自動ズームで変わる）
+            val cp = cellPx * cam[2]
             // カメラの左上（世界のマス単位）。追尾しない時は 0
-            val ox = cam[0] - viewCols / 2f
-            val oy = cam[1] - viewRows / 2f
+            val ox = cam[0] - viewCols * cellPx / cp / 2f
+            val oy = cam[1] - viewRows * cellPx / cp / 2f
             val fx = ox - floor(ox)
             val fy = oy - floor(oy)
+            val shownCols = if (follow) ceil(size.width / cp).toInt() + 1 else cols
+            val shownRows = if (follow) ceil(size.height / cp).toInt() + 1 else rows
             if (cfg.gridLines) {
                 val gc = p.purple.copy(alpha = 0.18f)
-                for (c in 0..viewCols + 1) drawLine(gc, Offset((c - fx) * cellPx, 0f), Offset((c - fx) * cellPx, size.height), 1f)
-                for (r in 0..viewRows + 1) drawLine(gc, Offset(0f, (r - fy) * cellPx), Offset(size.width, (r - fy) * cellPx), 1f)
+                for (c in 0..shownCols) drawLine(gc, Offset((c - fx) * cp, 0f), Offset((c - fx) * cp, size.height), 1f)
+                for (r in 0..shownRows) drawLine(gc, Offset(0f, (r - fy) * cp), Offset(size.width, (r - fy) * cp), 1f)
             }
-            val gap = if (cfg.shape == CellShape.PIXEL) 0f else cellPx * cfg.cellGap.coerceIn(0f, 0.6f)
-            val cs = cellPx - gap
-            val cell = Size(cs, cs)
+            val gap = if (cfg.shape == CellShape.PIXEL) 0f else cp * cfg.cellGap.coerceIn(0f, 0.6f)
+            val cs0 = cp - gap
             val time = sim.generation * 0.05f
+            val glowR = cp * 0.95f * cfg.glowSize.coerceIn(0.3f, 3f)
             val c0 = floor(ox).toInt()
             val r0 = floor(oy).toInt()
-            val visCols = if (follow) viewCols + 1 else cols
-            val visRows = if (follow) viewRows + 1 else rows
-            for (vr in 0 until visRows) for (vc in 0 until visCols) {
+            for (vr in 0 until shownRows) for (vc in 0 until shownCols) {
                 var c = c0 + vc
                 var r = r0 + vr
                 if (cfg.wrap) { c = ((c % cols) + cols) % cols; r = ((r % rows) + rows) % rows }
@@ -896,9 +914,13 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                 val i = r * cols + c
                 val g = sim.glow[i]
                 if (g < 0.03f) continue
-                val x = (vc - fx) * cellPx + gap / 2
-                val y = (vr - fy) * cellPx + gap / 2
                 val alive = sim.cells[i]
+                // 脈打つ：位置ごとに少しずらした波で大きさが変わる
+                val cs = if (cfg.pulse && alive) cs0 * (0.78f + 0.22f * sin(clock[0] * 5f + (c + r) * 0.45f)) else cs0
+                val center = Offset((vc - fx) * cp + gap / 2 + cs0 / 2, (vr - fy) * cp + gap / 2 + cs0 / 2)
+                val x = center.x - cs / 2
+                val y = center.y - cs / 2
+                val cell = Size(cs, cs)
                 val color = if (!alive) p.purple else when (cfg.color) {
                     LifeColor.AGE -> when {
                         sim.age[i] < 2 -> p.yellow
@@ -916,8 +938,9 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                     LifeColor.MONO -> p.cyan
                 }
                 val alpha = 0.9f * g
-                val center = Offset(x + cs / 2, y + cs / 2)
-                if (cfg.glow && alive) drawCircle(color.copy(alpha = 0.18f), cellPx * 0.95f, center)
+                if (cfg.glow && alive) drawCircle(color.copy(alpha = 0.18f), glowR, center)
+                // 生まれたばかりのセルを白く光らせる
+                if (cfg.birthFlash && alive && sim.age[i] == 1) drawCircle(Color.White.copy(alpha = 0.45f), cp * 1.1f, center)
                 when (cfg.shape) {
                     CellShape.SQUARE -> drawRoundRect(color.copy(alpha = alpha), Offset(x, y), cell, CornerRadius(cs * 0.18f))
                     CellShape.PIXEL -> drawRect(color.copy(alpha = alpha), Offset(x, y), cell)
@@ -932,10 +955,10 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
             }
             if (sim.flash > 0f) drawRect(p.pink.copy(alpha = sim.flash * 0.25f))
             if (sim.ripple > 0f) {
-                val rr = (1f - sim.ripple) * cellPx * 12f
+                val rr = (1f - sim.ripple) * cp * 12f
                 drawCircle(p.yellow.copy(alpha = sim.ripple), rr, Offset(sim.rippleX, sim.rippleY), style = Stroke(3f))
             }
-            if (cfg.hud) drawLifeHud(sim, cfg, p, hudPaint, if (follow) cam else null, viewCols, viewRows)
+            if (cfg.hud) drawLifeHud(sim, cfg, p, hudPaint, if (follow && cfg.minimap) cam else null, viewCols, viewRows)
         }
     }
 }
@@ -993,8 +1016,8 @@ private fun DrawScope.drawLifeHud(sim: LifeSim, cfg: LifeConfig, p: RetroPalette
             val h = sim.heat[by * sim.blocksX + bx] / maxHeat
             if (h > 0.05f) drawRect(p.yellow.copy(alpha = 0.2f + 0.7f * h), Offset(mx + bx * bw, my + by * bh), Size(bw + 0.5f, bh + 0.5f))
         }
-        val vw = mw * viewCols / sim.cols
-        val vh = mh * viewRows / sim.rows
+        val vw = (mw * viewCols / cam[2] / sim.cols).coerceAtMost(mw)
+        val vh = (mh * viewRows / cam[2] / sim.rows).coerceAtMost(mh)
         val vx = mx + mw * cam[0] / sim.cols - vw / 2
         val vy = my + mh * cam[1] / sim.rows - vh / 2
         drawRect(p.cyan, Offset(vx, vy), Size(vw, vh), style = Stroke(1.5.dp.toPx()))

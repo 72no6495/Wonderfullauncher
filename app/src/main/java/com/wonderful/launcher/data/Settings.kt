@@ -47,7 +47,71 @@ enum class WallpaperType(val label: String, val animated: Boolean = true) {
     LIFE("ライフゲーム"),
     /** ライフゲームの広い世界を、一番変化が起きている所を追いかけて映す */
     LIFE_FOLLOW("ライフゲーム追尾"),
+    /** ホーム画面そのものが奥へ奥へと映り込む合わせ鏡 */
+    MIRROR("合わせ鏡"),
+    /** カメラで見ている景色 */
+    CAMERA("カメラ", animated = false),
 }
+
+/** ライフゲームにときどき降ってくる模様 */
+enum class LifeInject(val label: String) {
+    GLIDER("グライダー"),
+    LWSS("宇宙船"),
+    R_PENTOMINO("Rペントミノ"),
+    ACORN("どんぐり"),
+    RANDOM("ランダム"),
+}
+
+/** 合わせ鏡の画質（軽さとのかね合い） */
+enum class MirrorQuality(val label: String, val scale: Float) {
+    LIGHT("軽い", 0.35f),
+    NORMAL("ふつう", 0.5f),
+    FINE("きれい", 0.75f),
+}
+
+@Serializable
+data class MirrorConfig(
+    /** 1 枚奥に映るまでの遅れ（秒） */
+    val delaySec: Float = 0.12f,
+    /** 1 枚奥に行くごとの大きさ */
+    val shrink: Float = 0.86f,
+    /** 1 枚奥に行くごとの回転（度） */
+    val rotation: Float = 0f,
+    /** 1 枚奥に行くごとに暗くなる */
+    val darken: Float = 0.12f,
+    /** 鏡なので 1 枚ごとに左右反転 */
+    val flip: Boolean = false,
+    /** ゆらゆら揺れる */
+    val wobble: Float = 0f,
+    /** 鏡の枠 */
+    val frame: Boolean = true,
+    /** 奥に行くほど色が変わる */
+    val rainbow: Boolean = false,
+    val quality: MirrorQuality = MirrorQuality.NORMAL,
+)
+
+enum class CameraLens(val label: String) {
+    BACK("外カメラ"),
+    FRONT("内カメラ"),
+}
+
+/** カメラ映像にかける色の効果 */
+enum class CameraEffect(val label: String) {
+    NORMAL("そのまま"),
+    MONO("モノクロ"),
+    SEPIA("セピア"),
+    VAPOR("ヴェイパー"),
+    NIGHT("暗視"),
+    INVERT("反転"),
+}
+
+@Serializable
+data class CameraConfig(
+    val lens: CameraLens = CameraLens.BACK,
+    val effect: CameraEffect = CameraEffect.NORMAL,
+    /** 走査線 */
+    val scanlines: Boolean = false,
+)
 
 /** 残像の描き方 */
 enum class TrailStyle(val label: String) {
@@ -229,6 +293,21 @@ data class LifeConfig(
     val followWorld: Float = 3f,
     /** 追尾モードでカメラが追いかける速さ */
     val followSpeed: Float = 1f,
+    /** 追尾モード：変化が広がったら引いて、まとまったら寄る */
+    val followAutoZoom: Boolean = true,
+    /** 追尾モード：世界の地図を表示 */
+    val minimap: Boolean = true,
+    /** 突然変異：毎世代ランダムにセルを反転させる割合（%） */
+    val mutation: Float = 0f,
+    /** ときどき降ってくる模様と間隔（injectGliders が ON の時） */
+    val injectPattern: LifeInject = LifeInject.GLIDER,
+    val injectEverySec: Float = 3f,
+    /** 光の大きさ */
+    val glowSize: Float = 1f,
+    /** セルが脈打つ */
+    val pulse: Boolean = false,
+    /** 生まれた瞬間に光る */
+    val birthFlash: Boolean = false,
 )
 
 /** 画面上部（時計の位置）に表示するもの */
@@ -677,6 +756,8 @@ data class LauncherSettings(
     val lava: LavaConfig = LavaConfig(),
     val aurora: AuroraConfig = AuroraConfig(),
     val life: LifeConfig = LifeConfig(),
+    val mirror: MirrorConfig = MirrorConfig(),
+    val camera: CameraConfig = CameraConfig(),
     val gradientAnimate: Boolean = true,
 
     // ── 時計 ──

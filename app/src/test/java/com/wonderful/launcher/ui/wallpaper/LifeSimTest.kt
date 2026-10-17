@@ -1,6 +1,7 @@
 package com.wonderful.launcher.ui.wallpaper
 
 import com.wonderful.launcher.data.LifeConfig
+import com.wonderful.launcher.data.LifeInject
 import com.wonderful.launcher.data.LifeRule
 import com.wonderful.launcher.data.LifeSeed
 import org.junit.Assert.assertEquals
@@ -66,5 +67,36 @@ class LifeSimTest {
         val still = LifeConfig(seed = LifeSeed.GUN, autoReseed = false)
         repeat(10) { empty.step(still) }
         assertNull(empty.hotspot(true))
+    }
+
+    @Test
+    fun mutationRevivesAnEmptyBoard() {
+        val s = LifeSim(60, 60)
+        s.setRule(LifeRule.CONWAY.birth, LifeRule.CONWAY.survive)
+        val cfg = LifeConfig(seed = LifeSeed.GUN, autoReseed = false, mutation = 1f)
+        repeat(5) { s.step(cfg) }
+        assertTrue("mutation should add cells, pop=${s.population}", s.population > 0)
+        assertEquals(s.cells.count { it }, s.population)
+    }
+
+    @Test
+    fun injectUsesChosenPatternAndInterval() {
+        val s = LifeSim(60, 60)
+        s.setRule(LifeRule.CONWAY.birth, LifeRule.CONWAY.survive)
+        val cfg = LifeConfig(autoReseed = false, injectGliders = true, injectPattern = LifeInject.ACORN, injectEverySec = 1f, stepMs = 100000f)
+        s.update(0.5f, cfg)
+        assertEquals(0, s.cells.count { it })
+        s.update(0.6f, cfg)
+        assertEquals(7, s.cells.count { it })
+    }
+
+    @Test
+    fun spreadGrowsWithActivity() {
+        val (s, cfg) = sim(LifeSeed.ACORN, 200, 200, wrap = false)
+        repeat(20) { s.step(cfg) }
+        val early = s.spread(100f, 100f, false)
+        repeat(400) { s.step(cfg) }
+        val late = s.spread(100f, 100f, false)
+        assertTrue("spread should grow: $early -> $late", late > early)
     }
 }
