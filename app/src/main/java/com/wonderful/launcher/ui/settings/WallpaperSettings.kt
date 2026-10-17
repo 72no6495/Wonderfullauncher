@@ -1,5 +1,8 @@
 package com.wonderful.launcher.ui.settings
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -8,10 +11,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wonderful.launcher.data.AuroraConfig
+import com.wonderful.launcher.data.CameraConfig
+import com.wonderful.launcher.data.CameraEffect
+import com.wonderful.launcher.data.CameraLens
 import com.wonderful.launcher.data.CellShape
 import com.wonderful.launcher.data.ColorMode
 import com.wonderful.launcher.data.GlitchConfig
@@ -19,6 +31,7 @@ import com.wonderful.launcher.data.LauncherSettings
 import com.wonderful.launcher.data.LavaConfig
 import com.wonderful.launcher.data.LifeColor
 import com.wonderful.launcher.data.LifeConfig
+import com.wonderful.launcher.data.LifeInject
 import com.wonderful.launcher.data.LifeRule
 import com.wonderful.launcher.data.LifeSeed
 import com.wonderful.launcher.data.MatrixCharset
@@ -26,6 +39,8 @@ import com.wonderful.launcher.data.MatrixConfig
 import com.wonderful.launcher.data.MazeConfig
 import com.wonderful.launcher.data.MazeGenerator
 import com.wonderful.launcher.data.MazeSolver
+import com.wonderful.launcher.data.MirrorConfig
+import com.wonderful.launcher.data.MirrorQuality
 import com.wonderful.launcher.data.ScreenCorner
 import com.wonderful.launcher.data.StarfieldConfig
 import com.wonderful.launcher.data.UnderwaterConfig
@@ -36,6 +51,7 @@ import com.wonderful.launcher.ui.components.RetroLabel
 import com.wonderful.launcher.ui.components.RetroTextField
 import com.wonderful.launcher.ui.components.SectionHeader
 import com.wonderful.launcher.ui.theme.LocalPalette
+import com.wonderful.launcher.ui.wallpaper.hasCameraPermission
 
 typealias SettingsUpdate = ((LauncherSettings) -> LauncherSettings) -> Unit
 
@@ -65,8 +81,69 @@ fun WallpaperDetailSettings(s: LauncherSettings, u: SettingsUpdate) {
         WallpaperType.LAVA -> LavaSettings(s.lava) { f -> u { it.copy(lava = f(it.lava)) } }
         WallpaperType.AURORA -> AuroraSettings(s.aurora) { f -> u { it.copy(aurora = f(it.aurora)) } }
         WallpaperType.LIFE -> LifeSettings(s.life) { f -> u { it.copy(life = f(it.life)) } }
+        WallpaperType.LIFE_FOLLOW -> {
+            SectionHeader("追尾カメラ")
+            RetroLabel("広い世界のうち、一番変化が起きている所をカメラが追いかけます。落ち着いたら初期位置（真ん中）に戻ります。初期配置は「Rペントミノ」や「どんぐり」がおすすめ", size = 11.sp, color = LocalPalette.current.text.copy(alpha = 0.7f), maxLines = 4)
+            SliderSetting("世界の広さ", s.life.followWorld, 1.5f..6f, "画面の何倍の広さか（広いほど長く育つが少し重くなる）", format = { "%.1f倍".format(it) }) { v -> u { it.copy(life = it.life.copy(followWorld = v)) } }
+            SliderSetting("カメラの速さ", s.life.followSpeed, 0.2f..4f, format = { "%.1f倍".format(it) }) { v -> u { it.copy(life = it.life.copy(followSpeed = v)) } }
+            SwitchSetting("自動ズーム", s.life.followAutoZoom, "変化が広がったら引いて、小さくまとまったら寄る") { v -> u { it.copy(life = it.life.copy(followAutoZoom = v)) } }
+            SwitchSetting("世界の地図（情報表示の横）", s.life.minimap) { v -> u { it.copy(life = it.life.copy(minimap = v)) } }
+            LifeSettings(s.life) { f -> u { it.copy(life = f(it.life)) } }
+        }
+        WallpaperType.MIRROR -> MirrorSettings(s.mirror) { f -> u { it.copy(mirror = f(it.mirror)) } }
+        WallpaperType.CAMERA -> CameraSettings(s.camera) { f -> u { it.copy(camera = f(it.camera)) } }
         WallpaperType.SYSTEM, WallpaperType.IMAGE, WallpaperType.SOLID -> Unit
     }
+}
+
+@Composable
+private fun MirrorSettings(c: MirrorConfig, set: ((MirrorConfig) -> MirrorConfig) -> Unit) {
+    val p = LocalPalette.current
+    SectionHeader("合わせ鏡")
+    RetroLabel(
+        "ホーム画面（アイコンや時計）が、合わせ鏡のように奥へ奥へと映り込みます。アイコンを動かすと、少し遅れて奥に伝わっていきます。",
+        size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 4,
+    )
+    SliderSetting("ディレイ（1 枚奥に映るまで）", c.delaySec, 0.04f..2f, "短いほどなめらか・長いほど軽くて残像のように遅れる", format = { "%.2f秒".format(it) }) { v -> set { it.copy(delaySec = v) } }
+    SliderSetting("奥行き（1 枚ごとの大きさ）", c.shrink, 0.5f..0.97f, "大きいほど細かく深く続く", format = ::pc) { v -> set { it.copy(shrink = v) } }
+    SliderSetting("1 枚ごとの回転", c.rotation, -30f..30f, "ずらすと渦巻きになる", format = { "%.1f°".format(it) }) { v -> set { it.copy(rotation = v) } }
+    SliderSetting("奥ほど暗く", c.darken, 0f..0.6f, format = ::pc) { v -> set { it.copy(darken = v) } }
+    SliderSetting("ゆらぎ", c.wobble, 0f..1f, format = ::pc) { v -> set { it.copy(wobble = v) } }
+    SwitchSetting("鏡なので左右反転", c.flip) { v -> set { it.copy(flip = v) } }
+    SwitchSetting("鏡の枠", c.frame) { v -> set { it.copy(frame = v) } }
+    SwitchSetting("奥ほど色が変わる", c.rainbow) { v -> set { it.copy(rainbow = v) } }
+    ChoiceSetting("画質", MirrorQuality.entries, c.quality, { it.label }, "軽いほど電池にやさしい") { v -> set { it.copy(quality = v) } }
+
+    SectionHeader("おすすめの組み合わせ")
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        RetroButton("まっすぐ", { set { MirrorConfig() } }, color = p.cyan)
+        RetroButton("渦巻き", { set { it.copy(rotation = 8f, shrink = 0.9f, rainbow = true, frame = true) } }, color = p.pink)
+        RetroButton("トンネル", { set { it.copy(shrink = 0.93f, darken = 0.08f, rotation = 0f, frame = true, delaySec = 0.06f) } }, color = p.mint)
+        RetroButton("のんびり残像", { set { it.copy(delaySec = 0.8f, shrink = 0.8f, wobble = 0.5f) } }, color = p.yellow)
+        RetroButton("鏡の部屋", { set { it.copy(flip = true, shrink = 0.88f, darken = 0.15f) } }, color = p.purple)
+    }
+    ResetRow { set { MirrorConfig() } }
+}
+
+@Composable
+private fun CameraSettings(c: CameraConfig, set: ((CameraConfig) -> CameraConfig) -> Unit) {
+    val p = LocalPalette.current
+    val context = LocalContext.current
+    var granted by remember { mutableStateOf(hasCameraPermission(context)) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
+    // カメラの壁紙を選んだらすぐ許可を聞く（1 回だけ）
+    LaunchedEffect(Unit) { if (!granted) launcher.launch(Manifest.permission.CAMERA) }
+    SectionHeader("カメラ")
+    RetroLabel(
+        "カメラで見ている景色を壁紙に映します。映像は画面に映すだけで、保存も送信もしません。設定などを開いている間はカメラを止めます。",
+        size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 4,
+    )
+    if (!granted) RetroButton("カメラを許可", { launcher.launch(Manifest.permission.CAMERA) }, Modifier.fillMaxWidth(), color = p.pink)
+    ChoiceSetting("カメラ", CameraLens.entries, c.lens, { it.label }) { v -> set { it.copy(lens = v) } }
+    ChoiceSetting("色の効果", CameraEffect.entries, c.effect, { it.label }) { v -> set { it.copy(effect = v) } }
+    SwitchSetting("走査線", c.scanlines) { v -> set { it.copy(scanlines = v) } }
+    RetroLabel("アイコンが見づらい時は、上の「調整 → 暗くする」で暗くできます", size = 11.sp, color = p.text.copy(alpha = 0.6f), maxLines = 2)
+    ResetRow { set { CameraConfig() } }
 }
 
 @Composable
@@ -204,6 +281,9 @@ private fun LifeSettings(c: LifeConfig, set: ((LifeConfig) -> LifeConfig) -> Uni
     ChoiceSetting("色の付け方", LifeColor.entries, c.color, { it.label }, "年齢: 生まれたて=黄→ピンク→水色 / 近傍数: 周りの数で色分け / ヒート: 長生きほど赤く") { v -> set { it.copy(color = v) } }
     SliderSetting("消えたセルの残光", c.afterglow, 0f..1f, format = ::pc) { v -> set { it.copy(afterglow = v) } }
     SwitchSetting("ネオンの光", c.glow) { v -> set { it.copy(glow = v) } }
+    if (c.glow) SliderSetting("光の大きさ", c.glowSize, 0.3f..3f, format = ::times) { v -> set { it.copy(glowSize = v) } }
+    SwitchSetting("生まれた瞬間に光る", c.birthFlash) { v -> set { it.copy(birthFlash = v) } }
+    SwitchSetting("セルが脈打つ", c.pulse) { v -> set { it.copy(pulse = v) } }
     SwitchSetting("マス目の線", c.gridLines) { v -> set { it.copy(gridLines = v) } }
     SwitchSetting("情報表示（世代・人口グラフ）", c.hud) { v -> set { it.copy(hud = v) } }
     if (c.hud) {
@@ -213,7 +293,12 @@ private fun LifeSettings(c: LifeConfig, set: ((LifeConfig) -> LifeConfig) -> Uni
 
     SectionHeader("ライフゲームの動き")
     SwitchSetting("タップでセルを置く", c.touch, "グライダーなどの模様がランダムに置かれる") { v -> set { it.copy(touch = v) } }
-    SwitchSetting("ときどきグライダーを投入", c.injectGliders) { v -> set { it.copy(injectGliders = v) } }
+    SwitchSetting("ときどき模様を投入", c.injectGliders) { v -> set { it.copy(injectGliders = v) } }
+    if (c.injectGliders) {
+        ChoiceSetting("投入する模様", LifeInject.entries, c.injectPattern, { it.label }) { v -> set { it.copy(injectPattern = v) } }
+        SliderSetting("投入の間隔", c.injectEverySec, 0.5f..30f, format = { "%.1f秒".format(it) }) { v -> set { it.copy(injectEverySec = v) } }
+    }
+    SliderSetting("突然変異", c.mutation, 0f..2f, "毎世代、ランダムなセルが反転する割合。止まりかけた世界がまた動き出す", format = { "%.2f%%".format(it) }) { v -> set { it.copy(mutation = v) } }
     SwitchSetting("止まったら自動で植え直す", c.autoReseed) { v -> set { it.copy(autoReseed = v) } }
     if (c.autoReseed) {
         SliderSetting("植え直すまでの最大世代", c.maxGenerations.toFloat(), 50f..5000f, format = { "${it.toInt()}世代" }) { v -> set { it.copy(maxGenerations = v.toInt()) } }
@@ -227,6 +312,8 @@ private fun LifeSettings(c: LifeConfig, set: ((LifeConfig) -> LifeConfig) -> Uni
         RetroButton("迷路が育つ", { set { it.copy(rule = LifeRule.MAZE, seed = LifeSeed.SOUP, color = LifeColor.HEAT, cellDp = 8f) } }, color = p.yellow)
         RetroButton("グライダー銃", { set { it.copy(rule = LifeRule.CONWAY, seed = LifeSeed.GUN, wrap = false, cellDp = 10f, autoReseed = false) } }, color = p.purple)
         RetroButton("昼と夜", { set { it.copy(rule = LifeRule.DAY_NIGHT, seed = LifeSeed.RANDOM, density = 0.5f, color = LifeColor.NEIGHBORS) } }, color = p.cyan)
+        RetroButton("ホタル", { set { it.copy(shape = CellShape.ROUND, color = LifeColor.AGE, glow = true, glowSize = 2.2f, birthFlash = true, pulse = true, afterglow = 0.9f, cellDp = 10f) } }, color = p.yellow)
+        RetroButton("終わらない世界", { set { it.copy(mutation = 0.05f, injectGliders = true, injectPattern = LifeInject.RANDOM, injectEverySec = 4f, autoReseed = false) } }, color = p.mint)
     }
     ResetRow { set { LifeConfig() } }
 }
