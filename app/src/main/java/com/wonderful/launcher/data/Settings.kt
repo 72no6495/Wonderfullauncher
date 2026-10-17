@@ -308,6 +308,11 @@ data class LifeConfig(
     val pulse: Boolean = false,
     /** 生まれた瞬間に光る */
     val birthFlash: Boolean = false,
+    /** 誕生の光が消えるまでの秒数と大きさ */
+    val birthFlashSec: Float = 0.9f,
+    val birthFlashSize: Float = 1.3f,
+    /** 追尾モード：何秒ごとに追いかけ直すか（0 = いつも追いかける） */
+    val followInterval: Float = 0f,
 )
 
 /** 画面上部（時計の位置）に表示するもの */

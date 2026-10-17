@@ -16,6 +16,8 @@ class LifeSim(val cols: Int, val rows: Int) {
     val glow = FloatArray(cols * rows)
     val age = IntArray(cols * rows)
     val neighbors = IntArray(cols * rows)
+    /** 生まれてからの光（1 → 0 へ消えていく）。誕生の光の演出用 */
+    val born = FloatArray(cols * rows)
     private var acc = 0f
     private var injectAcc = 0f
     var generation = 0; private set
@@ -49,7 +51,7 @@ class LifeSim(val cols: Int, val rows: Int) {
     }
 
     fun seed(cfg: LifeConfig) {
-        cells.fill(false); age.fill(0)
+        cells.fill(false); age.fill(0); born.fill(0f)
         val d = cfg.density
         when (cfg.seed) {
             LifeSeed.RANDOM -> for (i in cells.indices) cells[i] = rnd.nextFloat() < d
@@ -102,6 +104,10 @@ class LifeSim(val cols: Int, val rows: Int) {
         // 消えたセルの残光（afterglow が大きいほど長く残る）
         val decay = min(1f, dt * (12f - 11f * cfg.afterglow.coerceIn(0f, 1f)))
         for (i in glow.indices) glow[i] = if (cells[i]) 1f else glow[i] * (1f - decay)
+        if (cfg.birthFlash) {
+            val fade = dt / cfg.birthFlashSec.coerceAtLeast(0.2f)
+            for (i in born.indices) if (born[i] > 0f) born[i] = max(0f, born[i] - fade)
+        }
         if (cfg.injectGliders) {
             injectAcc += dt
             if (injectAcc > cfg.injectEverySec.coerceAtLeast(0.5f)) {
@@ -144,7 +150,10 @@ class LifeSim(val cols: Int, val rows: Int) {
             neighbors[i] = nbs
             age[i] = if (alive) age[i] + 1 else 0
             if (alive) { pop++; hash = (hash xor i.toLong()) * 1099511628211L }
-            if (alive != cells[i]) { nChanged++; changes[(r / block) * blocksX + c / block]++ }
+            if (alive != cells[i]) {
+                nChanged++; changes[(r / block) * blocksX + c / block]++
+                if (alive && cfg.birthFlash) born[i] = 1f
+            }
         }
         changed = nChanged
         for (b in heat.indices) heat[b] = heat[b] * 0.82f + changes[b]

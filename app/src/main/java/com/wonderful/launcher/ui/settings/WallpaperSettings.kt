@@ -85,7 +85,9 @@ fun WallpaperDetailSettings(s: LauncherSettings, u: SettingsUpdate) {
             SectionHeader("追尾カメラ")
             RetroLabel("広い世界のうち、一番変化が起きている所をカメラが追いかけます。落ち着いたら初期位置（真ん中）に戻ります。初期配置は「Rペントミノ」や「どんぐり」がおすすめ", size = 11.sp, color = LocalPalette.current.text.copy(alpha = 0.7f), maxLines = 4)
             SliderSetting("世界の広さ", s.life.followWorld, 1.5f..6f, "画面の何倍の広さか（広いほど長く育つが少し重くなる）", format = { "%.1f倍".format(it) }) { v -> u { it.copy(life = it.life.copy(followWorld = v)) } }
-            SliderSetting("カメラの速さ", s.life.followSpeed, 0.2f..4f, format = { "%.1f倍".format(it) }) { v -> u { it.copy(life = it.life.copy(followSpeed = v)) } }
+            // 遅い側を細かく選べるよう、つまみは速さの平方根で動かす
+            SliderSetting("カメラの速さ", kotlin.math.sqrt(s.life.followSpeed), 0.14f..2f, "左ほどゆっくり", format = { "%.2f倍".format(it * it) }) { v -> u { it.copy(life = it.life.copy(followSpeed = v * v)) } }
+            SliderSetting("たまに追尾", s.life.followInterval, 0f..60f, "何秒ごとに追いかけ直すか。0 はいつも追いかける。それ以外は狙った場所をしばらく映し続ける", format = { if (it < 0.5f) "いつも" else "${it.toInt()}秒ごと" }) { v -> u { it.copy(life = it.life.copy(followInterval = if (v < 0.5f) 0f else v)) } }
             SwitchSetting("自動ズーム", s.life.followAutoZoom, "変化が広がったら引いて、小さくまとまったら寄る") { v -> u { it.copy(life = it.life.copy(followAutoZoom = v)) } }
             SwitchSetting("世界の地図（情報表示の横）", s.life.minimap) { v -> u { it.copy(life = it.life.copy(minimap = v)) } }
             LifeSettings(s.life) { f -> u { it.copy(life = f(it.life)) } }
@@ -283,6 +285,10 @@ private fun LifeSettings(c: LifeConfig, set: ((LifeConfig) -> LifeConfig) -> Uni
     SwitchSetting("ネオンの光", c.glow) { v -> set { it.copy(glow = v) } }
     if (c.glow) SliderSetting("光の大きさ", c.glowSize, 0.3f..3f, format = ::times) { v -> set { it.copy(glowSize = v) } }
     SwitchSetting("生まれた瞬間に光る", c.birthFlash) { v -> set { it.copy(birthFlash = v) } }
+    if (c.birthFlash) {
+        SliderSetting("誕生の光の長さ", c.birthFlashSec, 0.2f..3f, format = { "%.1f秒".format(it) }) { v -> set { it.copy(birthFlashSec = v) } }
+        SliderSetting("誕生の光の大きさ", c.birthFlashSize, 0.5f..3f, format = ::times) { v -> set { it.copy(birthFlashSize = v) } }
+    }
     SwitchSetting("セルが脈打つ", c.pulse) { v -> set { it.copy(pulse = v) } }
     SwitchSetting("マス目の線", c.gridLines) { v -> set { it.copy(gridLines = v) } }
     SwitchSetting("情報表示（世代・人口グラフ）", c.hud) { v -> set { it.copy(hud = v) } }

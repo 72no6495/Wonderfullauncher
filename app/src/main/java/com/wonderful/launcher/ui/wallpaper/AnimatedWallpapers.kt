@@ -810,6 +810,8 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
         val cam = remember(sim) { floatArrayOf(cols / 2f, rows / 2f, 1f) }
         // 脈打つ演出用の時計（秒）
         val clock = remember { floatArrayOf(0f) }
+        // 「たまに追尾」で狙っている所（x, y, 倍率, 次に狙い直すまでの秒）
+        val lock = remember(sim) { floatArrayOf(cols / 2f, rows / 2f, 1f, 0f) }
         val tick = remember { mutableIntStateOf(0) }
         val speed by rememberUpdatedState(s.sceneSpeed())
         val config by rememberUpdatedState(cfg)
@@ -839,22 +841,38 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                         sim.update(step * speed, config)
                         // 一番変化している所を追いかける。落ち着いたら初期位置（世界の真ん中）へ戻る
                         if (follow) {
-                            val hot = sim.hotspot(config.wrap)
-                            val target = hot ?: (sim.cols / 2f to sim.rows / 2f)
-                            val k = min(1f, step * 1.2f * config.followSpeed)
                             fun delta(from: Float, to: Float, n: Int): Float {
                                 var d = to - from
                                 if (config.wrap) { if (d > n / 2f) d -= n; if (d < -n / 2f) d += n }
                                 return d
                             }
-                            cam[0] += delta(cam[0], target.first, sim.cols) * k
-                            cam[1] += delta(cam[1], target.second, sim.rows) * k
-                            // 自動ズーム：変化が広がったら引き、小さくまとまったら寄る。落ち着いたら等倍へ
-                            val zTarget = if (config.followAutoZoom && hot != null) {
-                                val r = sim.spread(cam[0], cam[1], config.wrap).coerceAtLeast(4f)
-                                (min(viewCols, viewRows) / (r * 3.2f)).coerceIn(minZoom, 1.8f)
-                            } else 1f.coerceAtLeast(minZoom)
-                            cam[2] += (zTarget - cam[2]) * k * 0.5f
+                            // 今いちばん変化している所と、そこに合わせた倍率
+                            fun aim(): Triple<Float, Float, Float> {
+                                val hot = sim.hotspot(config.wrap)
+                                val t = hot ?: (sim.cols / 2f to sim.rows / 2f)
+                                // 自動ズーム：変化が広がったら引き、小さくまとまったら寄る。落ち着いたら等倍へ
+                                val z = if (config.followAutoZoom && hot != null) {
+                                    val r = sim.spread(t.first, t.second, config.wrap).coerceAtLeast(4f)
+                                    (min(viewCols, viewRows) / (r * 3.2f)).coerceIn(minZoom, 1.8f)
+                                } else 1f.coerceAtLeast(minZoom)
+                                return Triple(t.first, t.second, z)
+                            }
+                            val target = if (config.followInterval > 0f) {
+                                // たまに追尾：決めた間隔ごとにだけ狙い直し、それまではその場所を映し続ける
+                                lock[3] -= step
+                                if (lock[3] <= 0f) {
+                                    val (x, y, z) = aim()
+                                    lock[0] = x; lock[1] = y; lock[2] = z
+                                    lock[3] = config.followInterval
+                                }
+                                Triple(lock[0], lock[1], lock[2])
+                            } else aim()
+                            val k = min(1f, step * 1.2f * config.followSpeed)
+                            // 遠い時も急に飛ばないよう、1 秒に動けるマス数にも上限をつける（ゆっくり設定でなめらかに）
+                            val maxMove = step * 40f * config.followSpeed / cam[2]
+                            cam[0] += (delta(cam[0], target.first, sim.cols) * k).coerceIn(-maxMove, maxMove)
+                            cam[1] += (delta(cam[1], target.second, sim.rows) * k).coerceIn(-maxMove, maxMove)
+                            cam[2] += (target.third - cam[2]) * k * 0.5f
                             val halfW = viewCols / cam[2] / 2f
                             val halfH = viewRows / cam[2] / 2f
                             if (config.wrap) {
@@ -913,7 +931,8 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                 else if (c !in 0 until cols || r !in 0 until rows) continue
                 val i = r * cols + c
                 val g = sim.glow[i]
-                if (g < 0.03f) continue
+                val b = if (cfg.birthFlash) sim.born[i] else 0f
+                if (g < 0.03f && b < 0.02f) continue
                 val alive = sim.cells[i]
                 // 脈打つ：位置ごとに少しずらした波で大きさが変わる
                 val cs = if (cfg.pulse && alive) cs0 * (0.78f + 0.22f * sin(clock[0] * 5f + (c + r) * 0.45f)) else cs0
@@ -939,8 +958,6 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                 }
                 val alpha = 0.9f * g
                 if (cfg.glow && alive) drawCircle(color.copy(alpha = 0.18f), glowR, center)
-                // 生まれたばかりのセルを白く光らせる
-                if (cfg.birthFlash && alive && sim.age[i] == 1) drawCircle(Color.White.copy(alpha = 0.45f), cp * 1.1f, center)
                 when (cfg.shape) {
                     CellShape.SQUARE -> drawRoundRect(color.copy(alpha = alpha), Offset(x, y), cell, CornerRadius(cs * 0.18f))
                     CellShape.PIXEL -> drawRect(color.copy(alpha = alpha), Offset(x, y), cell)
@@ -952,6 +969,8 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
                         drawPath(d, color.copy(alpha = alpha))
                     }
                 }
+                // 誕生の光：やわらかい光の輪が広がって、ふわっと消える（光は足し算で重ねる）
+                if (b > 0.02f) drawBirthFlash(center, cp * cfg.birthFlashSize.coerceIn(0.5f, 3f), b, if (alive) color else p.yellow)
             }
             if (sim.flash > 0f) drawRect(p.pink.copy(alpha = sim.flash * 0.25f))
             if (sim.ripple > 0f) {
@@ -960,6 +979,27 @@ fun LifeScene(s: LauncherSettings, p: RetroPalette, paused: Boolean, modifier: M
             }
             if (cfg.hud) drawLifeHud(sim, cfg, p, hudPaint, if (follow && cfg.minimap) cam else null, viewCols, viewRows)
         }
+    }
+}
+
+/**
+ * 生まれたセルの光。b は 1（生まれた瞬間）→ 0（消える）。
+ * 色つきの光の芯・広がる輪・最初の一瞬だけ十字のきらめき
+ */
+private fun DrawScope.drawBirthFlash(center: Offset, size: Float, b: Float, color: Color) {
+    val e = 1f - b
+    // なめらかに消える（最初は明るく、最後はふわっと）
+    val a = b * b * (3f - 2f * b)
+    val tint = lerp(color, Color.White, 0.35f)
+    drawCircle(tint, size * (0.7f + 0.8f * e), center, alpha = 0.16f * a, blendMode = BlendMode.Plus)
+    drawCircle(tint, size * (0.38f + 0.3f * e), center, alpha = 0.3f * a, blendMode = BlendMode.Plus)
+    drawCircle(Color.White, size * 0.2f * (0.5f + 0.5f * b), center, alpha = 0.9f * a, blendMode = BlendMode.Plus)
+    drawCircle(color, size * (0.3f + 1.1f * e), center, alpha = 0.55f * a, style = Stroke(size * 0.07f * b + 0.8f), blendMode = BlendMode.Plus)
+    if (b > 0.55f) {
+        val l = size * 0.75f * (b - 0.55f) / 0.45f
+        val w = size * 0.05f + 0.6f
+        drawLine(Color.White.copy(alpha = 0.7f * a), Offset(center.x - l, center.y), Offset(center.x + l, center.y), w, blendMode = BlendMode.Plus)
+        drawLine(Color.White.copy(alpha = 0.7f * a), Offset(center.x, center.y - l), Offset(center.x, center.y + l), w, blendMode = BlendMode.Plus)
     }
 }
 
