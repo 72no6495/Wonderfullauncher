@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.data.LauncherSettings
 import com.wonderful.launcher.data.RecentSource
+import com.wonderful.launcher.data.RecentTab
 import com.wonderful.launcher.data.SystemActions
 import com.wonderful.launcher.ui.RecentItem
 import com.wonderful.launcher.ui.components.AppIcon
@@ -50,8 +51,10 @@ import com.wonderful.launcher.ui.theme.LocalPalette
 @Composable
 fun RecentPanel(
     settings: LauncherSettings,
-    items: List<RecentItem>,
+    recentItems: List<RecentItem>,
+    todayItems: List<RecentItem>,
     icons: Map<String, ImageBitmap>,
+    onTab: (RecentTab) -> Unit,
     onLaunch: (AppInfo) -> Unit,
     onMenu: (AppInfo) -> Unit,
     onRemove: (String) -> Unit,
@@ -62,8 +65,20 @@ fun RecentPanel(
     val p = LocalPalette.current
     val context = LocalContext.current
     val needsPermission = settings.recentSource == RecentSource.SYSTEM && !SystemActions.hasUsageAccess(context)
+    // 選んだタブは設定に保存されるので、閉じても次に開いた時に同じタブ
+    val tab = settings.recentTab
+    val today = tab == RecentTab.TODAY
+    val items = if (today) todayItems else recentItems
 
-    RetroWindow("RECENT.LOG", onClose, modifier) {
+    RetroWindow(if (today) "TODAY.LOG" else "RECENT.LOG", onClose, modifier) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            RecentTab.entries.forEach { t ->
+                RetroButton(t.label, { onTab(t) }, Modifier.weight(1f), color = if (t == RecentTab.TODAY) p.yellow else p.cyan, filled = t == tab)
+            }
+        }
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             RetroLabel(
                 "SOURCE: " + if (settings.recentSource == RecentSource.SYSTEM) "SYSTEM" else "LAUNCHER",
@@ -81,14 +96,17 @@ fun RecentPanel(
             }
         }
         if (items.isEmpty() && !needsPermission) {
-            EmptyMessage("まだ履歴がありません\nスフィアからアプリを起動してみよう")
+            EmptyMessage(
+                if (today) "今日はまだアプリを起動していません\nスフィアからアプリを起動してみよう"
+                else "まだ履歴がありません\nスフィアからアプリを起動してみよう",
+            )
         }
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            itemsIndexed(items, key = { _, it -> it.app.key }) { index, item ->
+            itemsIndexed(items, key = { _, it -> "${tab.name}/${it.app.key}" }) { index, item ->
                 // 上から順にスライドインする
                 val anim = remember { Animatable(0f) }
                 LaunchedEffect(Unit) {
@@ -127,14 +145,16 @@ fun RecentPanel(
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         RetroLabel(item.app.label, size = 15.sp)
-                        if (settings.recentShowTime) {
+                        if (today) {
+                            RetroLabel("今日 ${item.count} 回", size = 11.sp, color = p.yellow)
+                        } else if (settings.recentShowTime) {
                             RetroLabel(
                                 DateUtils.getRelativeTimeSpanString(item.time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString(),
                                 size = 11.sp, color = p.cyan,
                             )
                         }
                     }
-                    if (settings.recentSource == RecentSource.LAUNCHER) {
+                    if (settings.recentSource == RecentSource.LAUNCHER && !today) {
                         RetroLabel(
                             "✕", color = p.pink, size = 18.sp,
                             modifier = Modifier

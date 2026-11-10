@@ -29,6 +29,8 @@ enum class SortOrder(val label: String) {
     RECENT_INSTALL("新しい順"),
     MOST_LAUNCHED("よく使う順"),
     SHUFFLE("シャッフル"),
+    /** フォルダ画面の「スフィア」で自分で並べた順 */
+    CUSTOM("自分で並べる"),
 }
 
 enum class WallpaperType(val label: String, val animated: Boolean = true) {
@@ -441,6 +443,12 @@ enum class PanelAnim(val label: String) {
     FADE("フェード"),
 }
 
+/** 最近の画面のタブ */
+enum class RecentTab(val label: String) {
+    RECENT("最近"),
+    TODAY("今日よく使う"),
+}
+
 enum class RecentSource(val label: String) {
     LAUNCHER("ランチャー"),
     SYSTEM("システム"),
@@ -793,6 +801,8 @@ data class LauncherSettings(
     val recentSource: RecentSource = RecentSource.LAUNCHER,
     val recentCount: Int = 15,
     val recentShowTime: Boolean = true,
+    /** 最近の画面で最後に選んでいたタブ（閉じても覚えておく） */
+    val recentTab: RecentTab = RecentTab.RECENT,
 
     // ── フォルダ ──
     val folderColumns: Int = 4,
@@ -917,11 +927,17 @@ data class LauncherData(
     val settings: LauncherSettings = LauncherSettings(),
     val sphereApps: List<String> = emptyList(),
     val sphereInitialized: Boolean = false,
+    /** スフィアを自分で並べたことがある（sphereApps の並びがその順） */
+    val sphereCustomized: Boolean = false,
     val folders: List<Folder> = emptyList(),
     val dockApps: List<String> = emptyList(),
     val hiddenApps: Set<String> = emptySet(),
     val recent: List<RecentEntry> = emptyList(),
     val launchCounts: Map<String, Int> = emptyMap(),
+    /** 今日（[dailyLaunchDay]）起動した回数。日付が変わったら数え直す */
+    val dailyLaunches: Map<String, Int> = emptyMap(),
+    /** [dailyLaunches] を数えている日（1970-01-01 からの日数） */
+    val dailyLaunchDay: Long = 0L,
     val widgets: List<WidgetItem> = emptyList(),
     /** 時計の位置に表示するウィジェット */
     val topWidget: WidgetItem? = null,

@@ -322,7 +322,9 @@ private fun SphereTab(s: LauncherSettings, u: Update, vm: LauncherViewModel, onR
     SliderSetting("球体の大きさ", s.sphereSize, 0.4f..1.5f, "ホーム画面で2本指ピンチでも変更できます", format = ::pct) { v -> u { it.copy(sphereSize = v) } }
     SliderSetting("アイコンの大きさ", s.iconSizeDp, 32f..88f, format = { "${it.toInt()}dp" }) { v -> u { it.copy(iconSizeDp = v) } }
     SliderSetting("最大アプリ数", s.sphereMaxApps.toFloat(), 8f..200f, format = { "${it.toInt()}" }) { v -> u { it.copy(sphereMaxApps = v.toInt()) } }
-    ChoiceSetting("並び順", SortOrder.entries, s.sortOrder, { it.label }) { v -> u { it.copy(sortOrder = v) } }
+    ChoiceSetting("並び順", SortOrder.entries, s.sortOrder, { it.label }, "「自分で並べる」はフォルダ画面の「SPHERE」で、長押ししたまま動かして並べ替えます") { v ->
+        if (v == SortOrder.CUSTOM) vm.chooseCustomOrder() else u { it.copy(sortOrder = v) }
+    }
     if (s.sortOrder == SortOrder.SHUFFLE) ActionSetting("並びをシャッフルし直す", "SHUFFLE") { vm.reshuffle() }
 
     SectionHeader("立体感")

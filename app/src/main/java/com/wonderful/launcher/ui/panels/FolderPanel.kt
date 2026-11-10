@@ -52,6 +52,8 @@ import androidx.compose.ui.unit.sp
 import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.data.Folder
 import com.wonderful.launcher.data.LauncherData
+import com.wonderful.launcher.data.SortOrder
+import com.wonderful.launcher.ui.components.ReorderableAppGrid
 import com.wonderful.launcher.ui.components.AppIcon
 import com.wonderful.launcher.ui.components.AppTile
 import com.wonderful.launcher.ui.components.EmptyMessage
@@ -73,7 +75,16 @@ class FolderActions(
     val setApps: (id: String, apps: List<String>) -> Unit,
     val removeApp: (id: String, key: String) -> Unit,
     val move: (id: String, delta: Int) -> Unit,
+    /** フォルダ内の並びを変えた */
+    val reorder: (id: String, apps: List<String>) -> Unit,
+    /** スフィアフォルダ：並べ替え・選び直し・外す */
+    val reorderSphere: (List<String>) -> Unit,
+    val setSphere: (List<String>) -> Unit,
+    val removeFromSphere: (String) -> Unit,
 )
+
+/** フォルダ画面の「スフィア」（球体のアプリと同じ中身・同じ並び）の ID */
+const val SPHERE_FOLDER_ID = "__sphere__"
 
 private sealed interface FolderScreen {
     data object Grid : FolderScreen
@@ -89,6 +100,7 @@ fun RetroPalette.folderColor(i: Int): Color = swatches[((i % swatches.size) + sw
 fun FolderPanel(
     data: LauncherData,
     apps: List<AppInfo>,
+    sphereApps: List<AppInfo>,
     icons: Map<String, ImageBitmap>,
     actions: FolderActions,
     onLaunch: (AppInfo) -> Unit,
@@ -103,7 +115,7 @@ fun FolderPanel(
 
     val title = when (val sc = screen) {
         FolderScreen.Grid -> "FOLDERS.DIR"
-        is FolderScreen.Detail -> (data.folders.firstOrNull { it.id == sc.id }?.name ?: "FOLDER").uppercase() + ".DIR"
+        is FolderScreen.Detail -> if (sc.id == SPHERE_FOLDER_ID) "SPHERE.DIR" else (data.folders.firstOrNull { it.id == sc.id }?.name ?: "FOLDER").uppercase() + ".DIR"
         is FolderScreen.Edit -> if (sc.id == null) "NEW_FOLDER.EXE" else "RENAME.EXE"
         is FolderScreen.Pick -> "ADD_APPS.EXE"
     }
@@ -136,20 +148,32 @@ fun FolderPanel(
         ) { sc ->
             when (sc) {
                 FolderScreen.Grid -> FolderGrid(
-                    data.folders, byKey, icons,
+                    data.folders, byKey, icons, sphereApps,
                     onOpen = { screen = FolderScreen.Detail(it) },
                     onCreate = { screen = FolderScreen.Edit(null) },
                     onMove = actions.move,
                 )
                 is FolderScreen.Detail -> {
                     val folder = data.folders.firstOrNull { it.id == sc.id }
-                    if (folder == null) {
+                    if (sc.id == SPHERE_FOLDER_ID) {
+                        SphereFolderDetail(
+                            sphereApps, icons, s.folderColumns, s.folderShowLabels,
+                            maxShown = s.sphereMaxApps,
+                            custom = s.sortOrder == SortOrder.CUSTOM,
+                            orderLabel = s.sortOrder.label,
+                            onLaunch = onLaunch, onMenu = onMenu,
+                            onRemove = actions.removeFromSphere,
+                            onReorder = actions.reorderSphere,
+                            onAdd = { screen = FolderScreen.Pick(SPHERE_FOLDER_ID) },
+                        )
+                    } else if (folder == null) {
                         EmptyMessage("フォルダが見つかりません")
                     } else {
                         FolderDetail(
                             folder, byKey, icons, s.folderColumns, s.folderShowLabels,
                             onLaunch = onLaunch, onMenu = onMenu,
                             onRemove = { actions.removeApp(folder.id, it) },
+                            onReorder = { actions.reorder(folder.id, it) },
                             onAdd = { screen = FolderScreen.Pick(folder.id) },
                             onEdit = { screen = FolderScreen.Edit(folder.id) },
                             onDelete = { actions.delete(folder.id); screen = FolderScreen.Grid },
@@ -174,12 +198,14 @@ fun FolderPanel(
                 }
                 is FolderScreen.Pick -> {
                     val folder = data.folders.firstOrNull { it.id == sc.id }
+                    val isSphere = sc.id == SPHERE_FOLDER_ID
                     AppPicker(
                         apps = apps.filter { it.key !in data.hiddenApps },
                         icons = icons,
-                        initial = folder?.apps.orEmpty(),
+                        initial = if (isSphere) sphereApps.map { it.key } else folder?.apps.orEmpty(),
                         onDone = { picked ->
-                            actions.setApps(sc.id, picked)
+                            if (isSphere) actions.setSphere(picked)
+                            else actions.setApps(sc.id, keepOrder(folder?.apps.orEmpty(), picked))
                             screen = FolderScreen.Detail(sc.id)
                         },
                     )
@@ -195,6 +221,7 @@ private fun FolderGrid(
     folders: List<Folder>,
     byKey: Map<String, AppInfo>,
     icons: Map<String, ImageBitmap>,
+    sphereApps: List<AppInfo>,
     onOpen: (String) -> Unit,
     onCreate: () -> Unit,
     onMove: (String, Int) -> Unit,
@@ -207,6 +234,36 @@ private fun FolderGrid(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // 球体のアプリが入った特別なフォルダ（消したり名前を変えたりはできない）
+        item(key = SPHERE_FOLDER_ID) {
+            val shape = RoundedCornerShape(14.dp)
+            Column(
+                Modifier
+                    .clip(shape)
+                    .background(Brush.verticalGradient(listOf(p.cyan.copy(alpha = 0.22f), p.pink.copy(alpha = 0.18f), Color.Black.copy(alpha = 0.4f))))
+                    .border(2.dp, Brush.linearGradient(listOf(p.cyan, p.pink)), shape)
+                    .clickable { onOpen(SPHERE_FOLDER_ID) }
+                    .padding(10.dp),
+            ) {
+                Box(Modifier.fillMaxWidth().aspectRatio(1.4f), contentAlignment = Alignment.Center) {
+                    val preview = sphereApps.take(4)
+                    if (preview.isEmpty()) {
+                        RetroGlyph(Glyph.SPHERE, p.cyan, Modifier.size(52.dp))
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            preview.chunked(2).forEach { row ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    row.forEach { AppIcon(icons[it.key], it.label, 34.dp) }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                NeonText("SPHERE", size = 14.sp, glow = p.cyan, chromatic = false)
+                RetroLabel("${sphereApps.size} apps・球体と連動", size = 11.sp, color = p.cyan)
+            }
+        }
         items(folders, key = { it.id }) { folder ->
             val color = p.folderColor(folder.colorIndex)
             val shape = RoundedCornerShape(14.dp)
@@ -279,6 +336,7 @@ private fun FolderDetail(
     onLaunch: (AppInfo) -> Unit,
     onMenu: (AppInfo) -> Unit,
     onRemove: (String) -> Unit,
+    onReorder: (List<String>) -> Unit,
     onAdd: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -302,24 +360,73 @@ private fun FolderDetail(
         }
         if (list.isEmpty()) {
             EmptyMessage("空っぽのフォルダ\n「+ 追加」でアプリを入れよう")
+        } else {
+            RetroLabel("長押ししたまま動かすと並べ替え", size = 11.sp, color = p.text.copy(alpha = 0.5f), modifier = Modifier.padding(horizontal = 12.dp))
         }
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(columns.coerceIn(3, 6)),
+        ReorderableAppGrid(
+            list, icons, columns.coerceIn(3, 6), showLabels,
+            onTap = { if (removeMode) onRemove(it.key) else onLaunch(it) },
+            onLongPress = onMenu,
+            onReorder = onReorder,
+            badge = { if (removeMode) "−" else null },
             modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
-        ) {
-            items(list, key = { it.key }) { app ->
-                AppTile(
-                    app, icons[app.key],
-                    onClick = { if (removeMode) onRemove(app.key) else onLaunch(app) },
-                    onLongClick = { onMenu(app) },
-                    showLabel = showLabels,
-                    badge = if (removeMode) "−" else null,
-                    badgeColor = p.pink,
-                    modifier = Modifier.animateItem(),
-                )
-            }
-        }
+        )
     }
+}
+
+/** スフィアフォルダ：球体のアプリが球体と同じ順で並ぶ。ここで並べ替えると球体の配置も入れ替わる */
+@Composable
+private fun SphereFolderDetail(
+    list: List<AppInfo>,
+    icons: Map<String, ImageBitmap>,
+    columns: Int,
+    showLabels: Boolean,
+    maxShown: Int,
+    custom: Boolean,
+    orderLabel: String,
+    onLaunch: (AppInfo) -> Unit,
+    onMenu: (AppInfo) -> Unit,
+    onRemove: (String) -> Unit,
+    onReorder: (List<String>) -> Unit,
+    onAdd: () -> Unit,
+) {
+    val p = LocalPalette.current
+    var removeMode by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RetroButton("+ 追加", onAdd, color = p.mint)
+            RetroButton(if (removeMode) "完了" else "外す", { removeMode = !removeMode }, color = p.yellow, filled = removeMode)
+        }
+        RetroLabel(
+            if (custom) "長押ししたまま動かすと、球体の配置も入れ替わります"
+            else "長押ししたまま動かすと、球体の配置も入れ替わります（並び順「$orderLabel」は「自分で並べる」になり、今の配置はそのまま残ります）",
+            size = 11.sp, color = p.text.copy(alpha = 0.55f), maxLines = 3, modifier = Modifier.padding(horizontal = 12.dp),
+        )
+        if (list.size > maxShown) {
+            RetroLabel("球体に出るのは先頭の ${maxShown} 個まで（薄いものは表示されません）", size = 11.sp, color = p.yellow, maxLines = 2, modifier = Modifier.padding(horizontal = 12.dp))
+        }
+        if (list.isEmpty()) EmptyMessage("球体が空っぽです\n「+ 追加」でアプリを入れよう")
+        val shown = list.take(maxShown).mapTo(HashSet()) { it.key }
+        ReorderableAppGrid(
+            list, icons, columns.coerceIn(3, 6), showLabels,
+            onTap = { if (removeMode) onRemove(it.key) else onLaunch(it) },
+            onLongPress = onMenu,
+            onReorder = onReorder,
+            badge = { if (removeMode) "−" else null },
+            dimmed = { it.key !in shown },
+            modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+        )
+    }
+}
+
+/** 選び直した時、元からあったものは元の順のまま、新しく選んだものを後ろに足す */
+private fun keepOrder(old: List<String>, picked: List<String>): List<String> {
+    val set = picked.toHashSet()
+    return old.filter { it in set } + picked.filter { it !in old }
 }
 
 @Composable

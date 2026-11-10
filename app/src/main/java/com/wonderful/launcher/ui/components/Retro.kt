@@ -328,6 +328,8 @@ fun AppTile(
     badge: String? = null,
     badgeColor: Color = LocalPalette.current.mint,
     dimmed: Boolean = false,
+    /** false なら押せない見た目だけ（並べ替えグリッドが自分でタッチを扱う時） */
+    clickable: Boolean = true,
 ) {
     val p = LocalPalette.current
     val interaction = remember { MutableInteractionSource() }
@@ -342,7 +344,7 @@ fun AppTile(
             .scale(scale)
             .graphicsLayer { alpha = if (dimmed) 0.4f else 1f }
             .clip(RoundedCornerShape(10.dp))
-            .combinedClickable(interaction, null, onClick = onClick, onLongClick = onLongClick)
+            .then(if (clickable) Modifier.combinedClickable(interaction, null, onClick = onClick, onLongClick = onLongClick) else Modifier)
             .padding(vertical = 6.dp, horizontal = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
