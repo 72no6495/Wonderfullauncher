@@ -152,6 +152,14 @@ object Migration {
             lava = s.lava.copy(blobs = s.lava.blobs.coerceIn(1, 20)),
             aurora = s.aurora.copy(ribbons = s.aurora.ribbons.coerceIn(1, 8)),
             vapor = s.vapor.copy(starCount = s.vapor.starCount.coerceIn(0, 500), horizon = s.vapor.horizon.finiteIn(0.3f, 0.85f, 0.62f)),
+            cylinder = s.cylinder.copy(
+                triggerWidthDp = s.cylinder.triggerWidthDp.finiteIn(8f, 60f, 18f),
+                triggerTopDp = s.cylinder.triggerTopDp.finiteIn(0f, 600f, 40f),
+                triggerLengthDp = s.cylinder.triggerLengthDp.finiteIn(40f, 600f, 140f),
+                size = s.cylinder.size.finiteIn(0.35f, 0.95f, 0.62f),
+                centerY = s.cylinder.centerY.finiteIn(0.2f, 0.8f, 0.45f),
+                autoHideSec = s.cylinder.autoHideSec.finiteIn(1f, 60f, 5f),
+            ),
             mirror = s.mirror.copy(
                 delaySec = s.mirror.delaySec.finiteIn(0.04f, 2f, 0.12f),
                 shrink = s.mirror.shrink.finiteIn(0.5f, 0.97f, 0.86f),
@@ -184,6 +192,7 @@ object Migration {
             settings = s,
             sphereApps = d.sphereApps.distinct(),
             dockApps = d.dockApps.distinct(),
+            cylinderItems = d.cylinderItems.filter { it.app != null || it.action != null }.take(MAX_CYLINDER_ITEMS),
             widgets = widgets,
             topWidget = d.topWidget?.let(::fix),
             gestureWidgets = d.gestureWidgets

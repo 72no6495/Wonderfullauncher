@@ -32,6 +32,10 @@ enum class SpecialPermission(val title: String, val unlocks: String) {
         "おやすみモードへのアクセス",
         "ジェスチャーでおやすみモードを切り替え",
     ),
+    OVERLAY(
+        "他のアプリに重ねて表示",
+        "シリンダーメニュー（ほかのアプリを使っている時に、右上の端を下にスワイプして出すメニュー）",
+    ),
     ;
 
     fun isGranted(context: Context): Boolean = when (this) {
@@ -40,6 +44,7 @@ enum class SpecialPermission(val title: String, val unlocks: String) {
         ACCESSIBILITY -> LauncherAccessibilityService.isRunning || accessibilityEnabledInSettings(context)
         USAGE -> SystemActions.hasUsageAccess(context)
         DND -> context.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
+        OVERLAY -> Settings.canDrawOverlays(context)
     }
 
     /** 許可するための設定画面 */
@@ -55,6 +60,7 @@ enum class SpecialPermission(val title: String, val unlocks: String) {
         ACCESSIBILITY -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         USAGE -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
         DND -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
+        OVERLAY -> Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:" + context.packageName))
     }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
     fun request(context: Context) {

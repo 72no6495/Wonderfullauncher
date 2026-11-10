@@ -13,7 +13,11 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wonderful.launcher.data.AppInfo
+import com.wonderful.launcher.data.AppOrder
+import com.wonderful.launcher.data.CylinderItem
+import com.wonderful.launcher.data.MAX_CYLINDER_ITEMS
 import com.wonderful.launcher.data.AppRepository
+import com.wonderful.launcher.data.RecentTab
 import com.wonderful.launcher.data.Folder
 import com.wonderful.launcher.data.LauncherData
 import com.wonderful.launcher.data.LauncherSettings
@@ -61,12 +65,13 @@ import kotlin.random.Random
 
 enum class Panel { NONE, SEARCH, SETTINGS, RECENT, FOLDERS, WIDGETS }
 
-data class RecentItem(val app: AppInfo, val time: Long)
+/** 最近の画面の 1 行。count は「今日よく使う」の起動回数 */
+data class RecentItem(val app: AppInfo, val time: Long, val count: Int = 0)
 
 class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     private val ctx get() = getApplication<Application>()
-    val store = LauncherStore(app, viewModelScope)
+    val store = LauncherStore.get(app)
     val repo = AppRepository(app, viewModelScope)
     val widgets = WidgetManager(app)
 
@@ -91,16 +96,28 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     private val _recent = MutableStateFlow<List<RecentItem>>(emptyList())
     val recent = _recent.asStateFlow()
 
+    /** 今日起動した回数の多い順 */
+    private val _todayTop = MutableStateFlow<List<RecentItem>>(emptyList())
+    val todayTop = _todayTop.asStateFlow()
+
     /** HOME ボタンが押された回数。スフィアのリセットに使う */
     private val _homePresses = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val homePresses: SharedFlow<Unit> = _homePresses.asSharedFlow()
 
+    /** スフィアのアプリ全部（並び順反映済み・表示数で切る前）。フォルダ画面の「スフィア」に出す */
+    val sphereOrdered: StateFlow<List<AppInfo>> = combine(apps, data) { all, d -> orderedSphere(all, d) }
+        .distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     /** スフィアに並ぶアプリ（並び順反映済み） */
-    val sphereApps: StateFlow<List<AppInfo>> = combine(apps, data) { all, d ->
+    val sphereApps: StateFlow<List<AppInfo>> = combine(sphereOrdered, data) { list, d ->
+        list.take(d.settings.sphereMaxApps.coerceAtLeast(1))
+    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private fun orderedSphere(all: List<AppInfo>, d: LauncherData): List<AppInfo> {
         val byKey = all.associateBy { it.key }
         val list = d.sphereApps.mapNotNull { byKey[it] }.filter { it.key !in d.hiddenApps }
-        sortApps(list, d).take(d.settings.sphereMaxApps.coerceAtLeast(1))
-    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        return sortApps(list, d)
+    }
 
     val dockApps: StateFlow<List<AppInfo>> = combine(apps, data) { all, d ->
         val byKey = all.associateBy { it.key }
@@ -127,6 +144,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         SortOrder.RECENT_INSTALL -> list.sortedByDescending { it.installTime }
         SortOrder.MOST_LAUNCHED -> list.sortedByDescending { d.launchCounts[it.key] ?: 0 }
         SortOrder.SHUFFLE -> list.sortedBy { it.key }.shuffled(Random(d.settings.shuffleSeed))
+        SortOrder.CUSTOM -> list
     }
 
     private var initializing = false
@@ -336,11 +354,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     fun launch(app: AppInfo, bounds: Rect? = null, opts: Bundle? = null) {
         if (SystemActions.launch(ctx, app, bounds, opts)) {
-            store.update { d ->
-                val recent = (listOf(RecentEntry(app.key, System.currentTimeMillis())) +
-                    d.recent.filter { it.key != app.key }).take(50)
-                d.copy(recent = recent, launchCounts = d.launchCounts + (app.key to ((d.launchCounts[app.key] ?: 0) + 1)))
-            }
+            store.update { d -> AppOrder.recordLaunch(d, app.key, System.currentTimeMillis(), today()) }
         }
     }
 
@@ -356,17 +370,34 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 d.recent.mapNotNull { e -> repo.findApp(e.key)?.let { RecentItem(it, e.time) } }
             }
             _recent.value = items.filter { it.app.key !in d.hiddenApps }.take(count)
+            // 今日よく使う：システム履歴なら端末全体、それ以外はこのランチャーから起動した回数
+            val lastUsed = items.associate { it.app.key to it.time } + d.recent.associate { it.key to it.time }
+            val top = if (d.settings.recentSource == RecentSource.SYSTEM && SystemActions.hasUsageAccess(ctx)) {
+                SystemActions.systemTodayLaunchCounts(ctx).mapNotNull { (pkg, n) ->
+                    repo.findByPackage(pkg)?.let { RecentItem(it, 0L, n) }
+                }.sortedByDescending { it.count }
+            } else {
+                AppOrder.byCount(AppOrder.todayCounts(d.dailyLaunches, d.dailyLaunchDay, today()), lastUsed)
+                    .mapNotNull { (key, n) -> repo.findApp(key)?.let { RecentItem(it, lastUsed[key] ?: 0L, n) } }
+            }
+            _todayTop.value = top.filter { it.app.key !in d.hiddenApps }.take(count)
         }
     }
 
+    private fun today(): Long = java.time.LocalDate.now().toEpochDay()
+
+    fun setRecentTab(tab: RecentTab) = updateSettings { it.copy(recentTab = tab) }
+
     fun clearRecent() {
-        store.update { it.copy(recent = emptyList()) }
+        store.update { it.copy(recent = emptyList(), dailyLaunches = emptyMap()) }
         _recent.value = emptyList()
+        _todayTop.value = emptyList()
     }
 
     fun removeRecent(key: String) {
-        store.update { d -> d.copy(recent = d.recent.filter { it.key != key }) }
+        store.update { d -> d.copy(recent = d.recent.filter { it.key != key }, dailyLaunches = d.dailyLaunches - key) }
         _recent.value = _recent.value.filter { it.app.key != key }
+        _todayTop.value = _todayTop.value.filter { it.app.key != key }
     }
 
     // ── スフィア ──
@@ -388,11 +419,54 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reshuffle() = store.updateSettings { it.copy(shuffleSeed = Random.nextInt()) }
 
+    /**
+     * フォルダ画面の「スフィア」で並べ替えた。並び順を「自分で並べる」にして、その順で保存する。
+     * それまでの並び（名前順など）で見えていた配置を元にするので、動かしたアプリ以外の場所は変わらない
+     */
+    fun reorderSphere(keys: List<String>) = store.update { d ->
+        val shown = orderedSphere(apps.value, d).map { it.key }
+        val stored = if (d.settings.sortOrder == SortOrder.CUSTOM) d.sphereApps else shown + d.sphereApps
+        d.copy(
+            sphereApps = AppOrder.mergeSphereOrder(keys, stored),
+            sphereCustomized = true,
+            settings = d.settings.copy(sortOrder = SortOrder.CUSTOM),
+        )
+    }
+
+    /**
+     * 設定で「自分で並べる」を選んだ時：前に自分で並べた順があればそれに戻し、
+     * 無ければ今見えている並びをそのまま固定する（配置が急に変わらないように）
+     */
+    fun chooseCustomOrder() {
+        val d = data.value
+        if (d.settings.sortOrder == SortOrder.CUSTOM) return
+        if (d.sphereCustomized) updateSettings { it.copy(sortOrder = SortOrder.CUSTOM) }
+        else reorderSphere(orderedSphere(apps.value, d).map { it.key })
+    }
+
+    /** フォルダ画面の「スフィア」で選び直した。今の並びを保ったまま、外したものを抜き、新しいものを後ろに足す */
+    fun setSphereKeepingOrder(keys: List<String>) = store.update { d ->
+        val picked = keys.toHashSet()
+        val visible = orderedSphere(apps.value, d).map { it.key }
+        val visibleSet = visible.toHashSet()
+        // 画面に出ていないもの（非表示にしたアプリなど）はそのまま残す
+        val invisible = d.sphereApps.filter { it !in visibleSet }
+        val added = keys.filter { it !in visibleSet && it !in d.sphereApps }
+        d.copy(sphereApps = (visible.filter { it in picked } + invisible + added).distinct())
+    }
+
     // ── ドック ──
 
     fun toggleDock(key: String) = store.update { d ->
         if (key in d.dockApps) d.copy(dockApps = d.dockApps - key)
         else d.copy(dockApps = (d.dockApps + key).takeLast(DOCK_MAX))
+    }
+
+    /** ドックの並びをまとめて決める（ドラッグで並べ替えた時） */
+    fun setDockOrder(keys: List<String>) = store.update { d ->
+        val set = d.dockApps.toHashSet()
+        val known = keys.filter { it in set }
+        d.copy(dockApps = (known + d.dockApps.filter { it !in known }).distinct())
     }
 
     fun moveDock(key: String, delta: Int) = store.update { d ->
@@ -402,6 +476,20 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         if (i < 0 || i == j) return@update d
         list.removeAt(i); list.add(j, key)
         d.copy(dockApps = list)
+    }
+
+    // ── シリンダーメニュー ──
+
+    fun addCylinderItem(item: CylinderItem) = store.update { d ->
+        if (d.cylinderItems.size >= MAX_CYLINDER_ITEMS) d else d.copy(cylinderItems = d.cylinderItems + item)
+    }
+
+    fun removeCylinderItem(index: Int) = store.update { d ->
+        d.copy(cylinderItems = d.cylinderItems.filterIndexed { i, _ -> i != index })
+    }
+
+    fun moveCylinderItem(index: Int, delta: Int) = store.update { d ->
+        d.copy(cylinderItems = AppOrder.move(d.cylinderItems, index, (index + delta).coerceIn(0, d.cylinderItems.lastIndex)))
     }
 
     // ── 非表示 ──

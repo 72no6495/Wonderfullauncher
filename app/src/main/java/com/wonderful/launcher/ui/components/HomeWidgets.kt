@@ -62,6 +62,18 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.positionChange
 import com.wonderful.launcher.data.AppInfo
+import com.wonderful.launcher.data.AppOrder
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import com.wonderful.launcher.data.ClockStyle
 import com.wonderful.launcher.data.CornerAction
 import com.wonderful.launcher.ui.theme.LocalPalette
@@ -255,7 +267,9 @@ fun CornerButton(
 // ドック
 // ─────────────────────────────────────────────
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * ドック。タップで起動、長押しして離すとメニュー、長押ししたまま左右に動かすと並べ替え
+ */
 @Composable
 fun Dock(
     apps: List<AppInfo>,
@@ -263,12 +277,36 @@ fun Dock(
     badges: Map<String, Int>,
     onLaunch: (AppInfo) -> Unit,
     onLongPress: (AppInfo) -> Unit,
+    onReorder: (List<String>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (apps.isEmpty()) return
     val s = LocalSettings.current
     val p = LocalPalette.current
+    val haptics = LocalHapticFeedback.current
     val shape = RoundedCornerShape(22.dp)
+    // ドラッグ中だけ画面の中で並びを入れ替える。離したら保存
+    var local by remember { mutableStateOf(apps) }
+    var dragKey by remember { mutableStateOf<String?>(null) }
+    var pressedKey by remember { mutableStateOf<String?>(null) }
+    var dragX by remember { mutableFloatStateOf(0f) }
+    var rowW by remember { mutableIntStateOf(0) }
+    LaunchedEffect(apps) { if (dragKey == null) local = apps }
+    val current by rememberUpdatedState(local)
+    val latestApps by rememberUpdatedState(apps)
+    val launch by rememberUpdatedState(onLaunch)
+    val long by rememberUpdatedState(onLongPress)
+    val reorder by rememberUpdatedState(onReorder)
+    val iconPx = with(LocalDensity.current) { s.dockIconSizeDp.dp.toPx() }
+    // 均等に並べた時の i 番目の中心（SpaceEvenly と同じ計算）
+    fun center(i: Int, n: Int): Float {
+        val gap = ((rowW - n * iconPx) / (n + 1)).coerceAtLeast(0f)
+        return gap + iconPx / 2 + i * (gap + iconPx)
+    }
+    fun indexAt(x: Float, n: Int): Int {
+        val gap = ((rowW - n * iconPx) / (n + 1)).coerceAtLeast(0f)
+        return ((x - gap - iconPx / 2) / (gap + iconPx)).roundToInt().coerceIn(0, n - 1)
+    }
     Row(
         modifier
             .fillMaxWidth()
@@ -279,23 +317,81 @@ fun Dock(
                     .border(1.dp, Brush.horizontalGradient(listOf(p.pink, p.cyan)), shape)
                 else it
             }
-            .padding(vertical = 10.dp, horizontal = 8.dp),
+            .padding(vertical = 10.dp, horizontal = 8.dp)
+            .onSizeChanged { rowW = it.width }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val n = current.size
+                    val idx = indexAt(down.position.x, n)
+                    // アイコンから離れた所（隙間）は無視
+                    if (abs(down.position.x - center(idx, n)) > iconPx * 0.75f) return@awaitEachGesture
+                    val key = current[idx].key
+                    pressedKey = key
+                    var tapped = false
+                    val longPressed = try {
+                        withTimeout(viewConfiguration.longPressTimeoutMillis) {
+                            tapped = waitForUpOrCancellation() != null
+                        }
+                        false
+                    } catch (_: PointerEventTimeoutCancellationException) {
+                        true
+                    }
+                    if (!longPressed) {
+                        pressedKey = null
+                        if (tapped) current.firstOrNull { it.key == key }?.let(launch)
+                        return@awaitEachGesture
+                    }
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    dragKey = key
+                    dragX = down.position.x
+                    var moved = 0f
+                    while (true) {
+                        val ev = awaitPointerEvent(PointerEventPass.Initial)
+                        val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!ch.pressed) { ch.consume(); break }
+                        val d = ch.positionChange()
+                        moved += abs(d.x) + abs(d.y)
+                        dragX = ch.position.x.coerceIn(0f, rowW.toFloat())
+                        ch.consume()
+                        val from = current.indexOfFirst { it.key == key }
+                        val to = indexAt(dragX, n)
+                        if (from >= 0 && to != from) local = AppOrder.move(current, from, to)
+                    }
+                    val app = current.firstOrNull { it.key == key }
+                    val changed = current.map { it.key } != latestApps.map { it.key }
+                    dragKey = null
+                    pressedKey = null
+                    if (moved < viewConfiguration.touchSlop && !changed) app?.let(long)
+                    else if (changed) reorder(current.map { it.key })
+                }
+            },
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        apps.forEach { app ->
-            val interaction = remember(app.key) { MutableInteractionSource() }
-            val pressed by interaction.collectIsPressedAsState()
-            val sc by animateFloatAsState(if (pressed) 0.8f else 1f, spring(dampingRatio = s.jelly(0.35f)), label = "dock")
-            Box(
-                Modifier
-                    .scale(sc)
-                    .combinedClickable(interaction, null, onClick = { onLaunch(app) }, onLongClick = { onLongPress(app) }),
-            ) {
-                AppIcon(icons[app.key], app.label, s.dockIconSizeDp.dp)
-                val count = if (app.isWorkProfile) 0 else badges[app.packageName] ?: 0
-                if (s.showBadges && count > 0) {
-                    Badge(count, s.badgeShowCount, Modifier.align(Alignment.TopEnd))
+        local.forEachIndexed { i, app ->
+            key(app.key) {
+                val dragging = app.key == dragKey
+                val sc by animateFloatAsState(
+                    when { dragging -> 1.2f; pressedKey == app.key -> 0.8f; else -> 1f },
+                    spring(dampingRatio = s.jelly(0.35f)), label = "dock",
+                )
+                // 並びが変わったら、前の場所からすべるように動く
+                val target = center(i, local.size)
+                val slide by animateFloatAsState(target, spring(stiffness = 600f), label = "dockSlide")
+                Box(
+                    Modifier
+                        .zIndex(if (dragging) 1f else 0f)
+                        .graphicsLayer {
+                            translationX = if (dragging) dragX - target else slide - target
+                            scaleX = sc; scaleY = sc
+                        },
+                ) {
+                    AppIcon(icons[app.key], app.label, s.dockIconSizeDp.dp)
+                    val count = if (app.isWorkProfile) 0 else badges[app.packageName] ?: 0
+                    if (s.showBadges && count > 0) {
+                        Badge(count, s.badgeShowCount, Modifier.align(Alignment.TopEnd))
+                    }
                 }
             }
         }

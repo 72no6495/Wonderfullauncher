@@ -122,6 +122,7 @@ private enum class Tab(val label: String) {
     FOLDER("フォルダ/ドック"),
     WIDGETS("ウィジェット"),
     GESTURE("ジェスチャー"),
+    CYLINDER("シリンダー"),
     PERMISSIONS("権限"),
     APPS("アプリ管理"),
     SYSTEM("システム"),
@@ -151,6 +152,8 @@ fun SettingsPanel(
     var chooseFor by remember { mutableStateOf<GestureSlot?>(null) }
     // ウィジェットを選んでいる置き場所（時計の位置 / ジェスチャー）
     var widgetTarget by remember { mutableStateOf<WidgetTarget?>(null) }
+    // シリンダーメニューに入れるアプリを選んでいる
+    var cylinderPick by remember { mutableStateOf(false) }
 
     Box(modifier) {
     RetroWindow("CONFIG.SYS", onClose, Modifier.fillMaxSize()) {
@@ -194,6 +197,7 @@ fun SettingsPanel(
                         Tab.GESTURE -> GestureTab(s, update, apps, data, vm, onChooseApp = { chooseFor = it }) {
                             widgetTarget = WidgetTarget.Gesture(it.name)
                         }
+                        Tab.CYLINDER -> CylinderSettings(data, apps, icons, vm, onAddApp = { cylinderPick = true })
                         Tab.PERMISSIONS -> PermissionsTab(s, update)
                         Tab.SYSTEM -> SystemTab(s, update, vm)
                         Tab.BACKUP -> BackupTab(vm)
@@ -256,6 +260,22 @@ fun SettingsPanel(
                 chooseFor = null
             },
             onClose = { chooseFor = null },
+        )
+    }
+    AnimatedVisibility(
+        visible = cylinderPick,
+        enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.9f),
+        exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.9f),
+    ) {
+        AppChooser(
+            title = "シリンダーメニューに入れるアプリ",
+            apps = apps,
+            icons = icons,
+            onPick = { app ->
+                vm.addCylinderItem(com.wonderful.launcher.data.CylinderItem(app = app.key))
+                cylinderPick = false
+            },
+            onClose = { cylinderPick = false },
         )
     }
     }
@@ -322,7 +342,9 @@ private fun SphereTab(s: LauncherSettings, u: Update, vm: LauncherViewModel, onR
     SliderSetting("球体の大きさ", s.sphereSize, 0.4f..1.5f, "ホーム画面で2本指ピンチでも変更できます", format = ::pct) { v -> u { it.copy(sphereSize = v) } }
     SliderSetting("アイコンの大きさ", s.iconSizeDp, 32f..88f, format = { "${it.toInt()}dp" }) { v -> u { it.copy(iconSizeDp = v) } }
     SliderSetting("最大アプリ数", s.sphereMaxApps.toFloat(), 8f..200f, format = { "${it.toInt()}" }) { v -> u { it.copy(sphereMaxApps = v.toInt()) } }
-    ChoiceSetting("並び順", SortOrder.entries, s.sortOrder, { it.label }) { v -> u { it.copy(sortOrder = v) } }
+    ChoiceSetting("並び順", SortOrder.entries, s.sortOrder, { it.label }, "「自分で並べる」はフォルダ画面の「SPHERE」で、長押ししたまま動かして並べ替えます") { v ->
+        if (v == SortOrder.CUSTOM) vm.chooseCustomOrder() else u { it.copy(sortOrder = v) }
+    }
     if (s.sortOrder == SortOrder.SHUFFLE) ActionSetting("並びをシャッフルし直す", "SHUFFLE") { vm.reshuffle() }
 
     SectionHeader("立体感")

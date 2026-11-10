@@ -214,6 +214,31 @@ object SystemActions {
             .take(limit)
     }
 
+    /**
+     * 今日（0 時から）アプリを開いた回数（パッケージ名 → 回数）。
+     * 同じアプリの中で画面が切り替わっただけのものは数えない
+     */
+    fun systemTodayLaunchCounts(context: Context): Map<String, Int> {
+        if (!hasUsageAccess(context)) return emptyMap()
+        val usm = context.getSystemService(UsageStatsManager::class.java) ?: return emptyMap()
+        val start = java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val events = runCatching { usm.queryEvents(start, System.currentTimeMillis()) }.getOrNull() ?: return emptyMap()
+        val counts = HashMap<String, Int>()
+        val e = android.app.usage.UsageEvents.Event()
+        var last: String? = null
+        while (events.hasNextEvent()) {
+            events.getNextEvent(e)
+            @Suppress("DEPRECATION")
+            if (e.eventType != android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND) continue
+            val pkg = e.packageName ?: continue
+            if (pkg == last) continue
+            last = pkg
+            if (pkg == context.packageName) continue
+            counts[pkg] = (counts[pkg] ?: 0) + 1
+        }
+        return counts
+    }
+
     // ── 壁紙 ──
 
     fun wallpaperFile(context: Context) = File(context.filesDir, "wallpaper.jpg")

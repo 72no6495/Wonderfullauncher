@@ -114,6 +114,8 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
     val icons by vm.icons.collectAsStateWithLifecycle()
     val sphereApps by vm.sphereApps.collectAsStateWithLifecycle()
     val dockApps by vm.dockApps.collectAsStateWithLifecycle()
+    val sphereOrdered by vm.sphereOrdered.collectAsStateWithLifecycle()
+    val todayTop by vm.todayTop.collectAsStateWithLifecycle()
     val panel by vm.panel.collectAsStateWithLifecycle()
     val menuApp by vm.menuApp.collectAsStateWithLifecycle()
     val recent by vm.recent.collectAsStateWithLifecycle()
@@ -354,6 +356,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                         Dock(
                             dockApps, icons, badges,
                             onLaunch = { vm.launch(it) }, onLongPress = { vm.showMenu(it) },
+                            onReorder = { vm.setDockOrder(it) },
                             modifier = Modifier.padding(bottom = 10.dp),
                         )
                     }
@@ -380,7 +383,8 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             }
             PanelHost(panel == Panel.RECENT, s, origin) {
                 RecentPanel(
-                    s, recent, icons,
+                    s, recent, todayTop, icons,
+                    onTab = { vm.setRecentTab(it) },
                     onLaunch = launchFromPanel,
                     onMenu = { vm.showMenu(it) },
                     onRemove = { vm.removeRecent(it) },
@@ -391,7 +395,7 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
             }
             PanelHost(panel == Panel.FOLDERS, s, origin) {
                 FolderPanel(
-                    data, apps, icons,
+                    data, apps, sphereOrdered, icons,
                     actions = remember(vm) {
                         FolderActions(
                             create = { n, c, a -> vm.createFolder(n, c, a) },
@@ -400,6 +404,10 @@ fun HomeScreen(vm: LauncherViewModel, onAddSystemWidget: AddSystemWidget) {
                             setApps = { id, a -> vm.updateFolder(id) { it.copy(apps = a) } },
                             removeApp = { id, k -> vm.removeFromFolder(id, k) },
                             move = { id, d -> vm.moveFolder(id, d) },
+                            reorder = { id, a -> vm.updateFolder(id) { it.copy(apps = a) } },
+                            reorderSphere = { vm.reorderSphere(it) },
+                            setSphere = { vm.setSphereKeepingOrder(it) },
+                            removeFromSphere = { vm.toggleSphere(it) },
                         )
                     },
                     onLaunch = launchFromPanel,

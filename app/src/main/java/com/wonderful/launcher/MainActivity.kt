@@ -4,6 +4,8 @@ import android.app.Activity
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Intent
+import com.wonderful.launcher.ui.Panel
+import com.wonderful.launcher.system.CylinderService
 import android.widget.Toast
 import android.content.pm.ActivityInfo
 import android.os.Bundle
@@ -58,36 +60,51 @@ class MainActivity : ComponentActivity() {
             val data by vm.data.collectAsStateWithLifecycle()
             val s = data.settings
             LaunchedEffect(s.hideStatusBar, s.hideNavBar, s.orientation, s.pet.enabled, s.pet.ignoreRotationLock) { applySystemUi(s) }
+            // シリンダーメニューを ON/OFF したら常駐サービスを動かす / 止める
+            LaunchedEffect(s.cylinder.enabled, s.cylinder.keepAlive) { CylinderService.sync(this@MainActivity) }
             // 横持ちの時だけ飼育モード。縦の時は飼育モードの画面ごと無いので、計算も描画も一切しない
             val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
             val petMode = landscape && petModeAllowed(s)
             SideEffect { inPetMode = petMode }
             if (petMode) PetScreen(vm, onAddSystemWidget = ::startAddWidget) else HomeScreen(vm, onAddSystemWidget = ::startAddWidget)
         }
+        openRequestedPanel(intent)
     }
 
     /** ホーム画面表示中に HOME ボタンが押されたとき */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        openRequestedPanel(intent)
         if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_HOME) && !inPetMode) {
             vm.onHomePressed(alreadyHome = atHome)
         }
     }
 
+    /** シリンダーメニューの「検索」などから開かれた時は、そのパネルを開く */
+    private fun openRequestedPanel(intent: Intent?) {
+        val name = intent?.getStringExtra(EXTRA_PANEL) ?: return
+        intent.removeExtra(EXTRA_PANEL)
+        Panel.entries.firstOrNull { it.name == name }?.let { vm.openPanel(it) }
+    }
+
     override fun onStart() {
         super.onStart()
+        CylinderService.launcherVisible.value = true
         vm.widgets.startListening()
     }
 
     override fun onResume() {
         super.onResume()
         atHome = true
+        // 「他のアプリに重ねて表示」を許可して戻ってきた時などに合わせる
+        CylinderService.sync(this)
         // ※ アプリ一覧はインストール/削除の通知（LauncherApps.Callback）で更新されるので、
         //   ホームに戻るたびに全アプリを読み直す必要はない。最近の履歴もパネルを開いた時に読む。
     }
 
     override fun onStop() {
         atHome = false
+        CylinderService.launcherVisible.value = false
         vm.widgets.stopListening()
         vm.flush()
         super.onStop()
@@ -147,6 +164,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /** 開いた時に出すパネル（Panel の名前） */
+        const val EXTRA_PANEL = "com.wonderful.launcher.PANEL"
         private const val REQ_BIND = 4101
         private const val REQ_CONFIG = 4102
     }
