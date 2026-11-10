@@ -197,6 +197,16 @@ class CylinderService : Service() {
     // ─────────────────────────────────────────────
 
     private fun show() {
+        // 万一出せなくても、ランチャーごと落ちないようにする
+        try {
+            showCylinder()
+        } catch (t: Throwable) {
+            android.util.Log.e("CylinderService", "シリンダーを出せませんでした", t)
+            removeCylinder()
+        }
+    }
+
+    private fun showCylinder() {
         if (cylinder != null || !Settings.canDrawOverlays(this)) return
         val entries = items.mapNotNull(::entryFor)
         val bounds = screenSize()
@@ -209,7 +219,10 @@ class CylinderService : Service() {
         val top = (centerY - radius - pad).toInt()
         val v = CylinderView(
             this, cfg, entries, radius, radius + pad,
-            onPick = { e -> run(e.item); removeCylinder() },
+            onPick = { e ->
+                runCatching { run(e.item) }.onFailure { android.util.Log.e("CylinderService", "起動できませんでした", it) }
+                removeCylinder()
+            },
             onClosed = { removeCylinder() },
         )
         v.onInteract = { restartAutoHide() }
