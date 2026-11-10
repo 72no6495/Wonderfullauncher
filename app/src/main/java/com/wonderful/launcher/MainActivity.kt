@@ -32,11 +32,6 @@ import com.wonderful.launcher.ui.LauncherViewModel
 
 class MainActivity : ComponentActivity() {
 
-    companion object {
-        /** 開いた時に出すパネル（Panel の名前） */
-        const val EXTRA_PANEL = "com.wonderful.launcher.PANEL"
-    }
-
     private val vm: LauncherViewModel by viewModels()
 
     /** すでにホーム画面が見えている状態か（他アプリから戻った時と区別する） */
@@ -169,6 +164,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /** 開いた時に出すパネル（Panel の名前） */
+        const val EXTRA_PANEL = "com.wonderful.launcher.PANEL"
         private const val REQ_BIND = 4101
         private const val REQ_CONFIG = 4102
     }
