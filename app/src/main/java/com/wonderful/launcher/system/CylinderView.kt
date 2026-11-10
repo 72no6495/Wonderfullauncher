@@ -101,11 +101,6 @@ class CylinderView(
     private val iconSrc = Rect()
     private val iconDst = RectF()
 
-    init {
-        // 出てくるアニメーションから始める
-        startFrames()
-    }
-
     // ─────────────────────────────────────────────
     // アニメーション
     // ─────────────────────────────────────────────
@@ -424,6 +419,13 @@ class CylinderView(
             }
         }
         if (hypot(px, py) > radius * 1.02f && cfg.closeOnOutside) close()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // 画面に出たら、出てくるアニメーションから始める
+        // （以前はコンストラクタの途中で呼んでいて、フレーム処理がまだ作られておらず落ちていた）
+        startFrames()
     }
 
     override fun onDetachedFromWindow() {
