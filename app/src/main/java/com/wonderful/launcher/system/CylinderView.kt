@@ -381,7 +381,7 @@ class CylinderView(
                 } else {
                     dragging = false
                     // 下から上へ素早くはじいたら引っ込む
-                    if (vy < -1400f * density && abs(vy) > abs(vx) * 1.2f && downY - ev.y > 36f * density) {
+                    if (cfg.closeOnFlickUp && vy < -1400f * density && abs(vy) > abs(vx) * 1.2f && downY - ev.y > 36f * density) {
                         close()
                         return true
                     }
