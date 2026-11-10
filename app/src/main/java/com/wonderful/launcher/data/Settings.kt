@@ -502,6 +502,8 @@ data class CylinderConfig(
     val autoHideSec: Float = 5f,
     /** シリンダーの外をさわったら引っ込む */
     val closeOnOutside: Boolean = true,
+    /** 下から上へ素早くはじいたら引っ込む（OFF なら上へはじいても回るだけ） */
+    val closeOnFlickUp: Boolean = true,
     val haptics: Boolean = true,
     /** ホログラムのゆらぎ・走査線を動かす（OFF にすると、さわっている時しか描き直さない） */
     val hologramMotion: Boolean = true,

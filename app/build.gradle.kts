@@ -13,8 +13,8 @@ android {
         applicationId = "com.wonderful.launcher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.4.1"
+        versionCode = 10
+        versionName = "1.4.2"
     }
 
     // リリース用の署名鍵。CI では GitHub の Secrets から渡す。

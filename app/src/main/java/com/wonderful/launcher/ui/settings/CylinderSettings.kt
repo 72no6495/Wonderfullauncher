@@ -124,6 +124,7 @@ fun CylinderSettings(
 
     SectionHeader("動き")
     SliderSetting("自動で引っ込むまで", c.autoHideSec, 1f..60f, "この秒数さわらないと引っ込む", format = { "${it.toInt()}秒" }) { v -> set { it.copy(autoHideSec = v) } }
+    SwitchSetting("下から上へ素早くはじいたら引っ込む", c.closeOnFlickUp, "OFF にすると、上へはじいても回るだけになります") { v -> set { it.copy(closeOnFlickUp = v) } }
     SwitchSetting("シリンダーの外をさわったら引っ込む", c.closeOnOutside) { v -> set { it.copy(closeOnOutside = v) } }
     SwitchSetting("振動", c.haptics, "出た時・回して選んだ時にカチッと") { v -> set { it.copy(haptics = v) } }
 

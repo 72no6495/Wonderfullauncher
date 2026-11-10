@@ -62,6 +62,7 @@ class AppOrderTest {
         assertEquals(true, d.settings.cylinder.enabled)
         assertEquals(0.95f, d.settings.cylinder.size)
         assertEquals(8f, d.settings.cylinder.triggerWidthDp)
+        assertEquals(true, d.settings.cylinder.closeOnFlickUp)
         // 古いバックアップには並べるものが無いので初期のショートカットが入る
         assertEquals(6, d.cylinderItems.size)
         val empty = BackupCodec.decode("""{"cylinderItems":[{},{"action":"FLASHLIGHT"}]}""")
