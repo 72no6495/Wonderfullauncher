@@ -443,6 +443,74 @@ enum class PanelAnim(val label: String) {
     FADE("フェード"),
 }
 
+/** シリンダーメニューに置けるショートカット（アプリ以外） */
+enum class CylinderAction(val label: String, val short: String, val needsAccessibility: Boolean = false) {
+    HOME("ランチャーを開く", "HOME"),
+    SEARCH("検索", "検索"),
+    RECENT("最近", "最近"),
+    FOLDERS("フォルダ", "フォルダ"),
+    WIDGETS("ウィジェット", "WIDGET"),
+    SETTINGS("ランチャーの設定", "設定"),
+    NOTIFICATIONS("通知", "通知"),
+    QUICK_SETTINGS("クイック設定", "QS"),
+    CAMERA("カメラ", "CAM"),
+    ASSISTANT("アシスタント", "AI"),
+    FLASHLIGHT("ライト", "ライト"),
+    DND("おやすみ切替", "DND"),
+    ALARM("アラーム", "アラーム"),
+    LOCK_SCREEN("画面ロック", "LOCK", needsAccessibility = true),
+    SCREENSHOT("スクショ", "SS", needsAccessibility = true),
+    SYSTEM_RECENTS("タスク一覧", "TASK", needsAccessibility = true),
+    POWER_MENU("電源メニュー", "電源", needsAccessibility = true),
+}
+
+/** シリンダーメニューに置ける数 */
+const val MAX_CYLINDER_ITEMS = 24
+
+/** シリンダーメニューの 1 つの穴（チャンバー）に入れるもの */
+@Serializable
+data class CylinderItem(
+    /** アプリなら AppInfo.key、ショートカットなら null */
+    val app: String? = null,
+    val action: CylinderAction? = null,
+)
+
+/** シリンダーメニューの色 */
+enum class CylinderColor(val label: String, val argb: Long) {
+    CYAN("シアン", 0xFF4FF5FF),
+    PINK("ピンク", 0xFFFF5FD2),
+    GREEN("グリーン", 0xFF5CFF9A),
+    GOLD("ゴールド", 0xFFFFD25C),
+    VIOLET("バイオレット", 0xFFB48CFF),
+}
+
+@Serializable
+data class CylinderConfig(
+    val enabled: Boolean = false,
+    /** 反応する所（画面の右上の端）：幅・上からの位置・長さ（dp） */
+    val triggerWidthDp: Float = 18f,
+    val triggerTopDp: Float = 40f,
+    val triggerLengthDp: Float = 140f,
+    /** 反応する所をうっすら表示（位置合わせ用） */
+    val showTrigger: Boolean = false,
+    /** シリンダーの大きさ（画面の高さに対する半径の割合）と縦の位置 */
+    val size: Float = 0.62f,
+    val centerY: Float = 0.45f,
+    val color: CylinderColor = CylinderColor.CYAN,
+    val showLabel: Boolean = true,
+    /** 何秒さわらないと引っ込むか */
+    val autoHideSec: Float = 5f,
+    /** シリンダーの外をさわったら引っ込む */
+    val closeOnOutside: Boolean = true,
+    val haptics: Boolean = true,
+    /** ホログラムのゆらぎ・走査線を動かす（OFF にすると、さわっている時しか描き直さない） */
+    val hologramMotion: Boolean = true,
+    /** アイコンを覚えておく（次から速く出る代わりにメモリを使う） */
+    val cacheIcons: Boolean = false,
+    /** 常駐して安定動作（通知領域に常駐する。OFF だとしばらくすると止められることがある） */
+    val keepAlive: Boolean = true,
+)
+
 /** 最近の画面のタブ */
 enum class RecentTab(val label: String) {
     RECENT("最近"),
@@ -771,6 +839,7 @@ data class LauncherSettings(
     val life: LifeConfig = LifeConfig(),
     val mirror: MirrorConfig = MirrorConfig(),
     val camera: CameraConfig = CameraConfig(),
+    val cylinder: CylinderConfig = CylinderConfig(),
     val gradientAnimate: Boolean = true,
 
     // ── 時計 ──
@@ -938,6 +1007,15 @@ data class LauncherData(
     val dailyLaunches: Map<String, Int> = emptyMap(),
     /** [dailyLaunches] を数えている日（1970-01-01 からの日数） */
     val dailyLaunchDay: Long = 0L,
+    /** シリンダーメニューに並べるもの（上から時計回り） */
+    val cylinderItems: List<CylinderItem> = listOf(
+        CylinderItem(action = CylinderAction.HOME),
+        CylinderItem(action = CylinderAction.NOTIFICATIONS),
+        CylinderItem(action = CylinderAction.FLASHLIGHT),
+        CylinderItem(action = CylinderAction.CAMERA),
+        CylinderItem(action = CylinderAction.SEARCH),
+        CylinderItem(action = CylinderAction.RECENT),
+    ),
     val widgets: List<WidgetItem> = emptyList(),
     /** 時計の位置に表示するウィジェット */
     val topWidget: WidgetItem? = null,

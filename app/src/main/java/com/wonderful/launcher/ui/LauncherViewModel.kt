@@ -14,6 +14,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.wonderful.launcher.data.AppInfo
 import com.wonderful.launcher.data.AppOrder
+import com.wonderful.launcher.data.CylinderItem
+import com.wonderful.launcher.data.MAX_CYLINDER_ITEMS
 import com.wonderful.launcher.data.AppRepository
 import com.wonderful.launcher.data.RecentTab
 import com.wonderful.launcher.data.Folder
@@ -69,7 +71,7 @@ data class RecentItem(val app: AppInfo, val time: Long, val count: Int = 0)
 class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     private val ctx get() = getApplication<Application>()
-    val store = LauncherStore(app, viewModelScope)
+    val store = LauncherStore.get(app)
     val repo = AppRepository(app, viewModelScope)
     val widgets = WidgetManager(app)
 
@@ -352,17 +354,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     fun launch(app: AppInfo, bounds: Rect? = null, opts: Bundle? = null) {
         if (SystemActions.launch(ctx, app, bounds, opts)) {
-            store.update { d ->
-                val recent = (listOf(RecentEntry(app.key, System.currentTimeMillis())) +
-                    d.recent.filter { it.key != app.key }).take(50)
-                val today = today()
-                d.copy(
-                    recent = recent,
-                    launchCounts = d.launchCounts + (app.key to ((d.launchCounts[app.key] ?: 0) + 1)),
-                    dailyLaunches = AppOrder.bumpDaily(d.dailyLaunches, d.dailyLaunchDay, today, app.key),
-                    dailyLaunchDay = today,
-                )
-            }
+            store.update { d -> AppOrder.recordLaunch(d, app.key, System.currentTimeMillis(), today()) }
         }
     }
 
@@ -484,6 +476,20 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         if (i < 0 || i == j) return@update d
         list.removeAt(i); list.add(j, key)
         d.copy(dockApps = list)
+    }
+
+    // ── シリンダーメニュー ──
+
+    fun addCylinderItem(item: CylinderItem) = store.update { d ->
+        if (d.cylinderItems.size >= MAX_CYLINDER_ITEMS) d else d.copy(cylinderItems = d.cylinderItems + item)
+    }
+
+    fun removeCylinderItem(index: Int) = store.update { d ->
+        d.copy(cylinderItems = d.cylinderItems.filterIndexed { i, _ -> i != index })
+    }
+
+    fun moveCylinderItem(index: Int, delta: Int) = store.update { d ->
+        d.copy(cylinderItems = AppOrder.move(d.cylinderItems, index, (index + delta).coerceIn(0, d.cylinderItems.lastIndex)))
     }
 
     // ── 非表示 ──

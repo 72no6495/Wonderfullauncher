@@ -44,4 +44,27 @@ class AppOrderTest {
         assertEquals(false, d.sphereCustomized)
         assertEquals(emptyMap<String, Int>(), d.dailyLaunches)
     }
+
+    @Test
+    fun recordLaunchUpdatesHistoryAndCounts() {
+        var d = LauncherData()
+        d = AppOrder.recordLaunch(d, "a", 1L, 10L)
+        d = AppOrder.recordLaunch(d, "b", 2L, 10L)
+        d = AppOrder.recordLaunch(d, "a", 3L, 10L)
+        assertEquals(listOf("a", "b"), d.recent.map { it.key })
+        assertEquals(2, d.launchCounts["a"])
+        assertEquals(mapOf("a" to 2, "b" to 1), d.dailyLaunches)
+    }
+
+    @Test
+    fun cylinderDefaultsAndSanitize() {
+        val d = BackupCodec.decode("""{"settings":{"cylinder":{"enabled":true,"size":5.0,"triggerWidthDp":-3}}}""")
+        assertEquals(true, d.settings.cylinder.enabled)
+        assertEquals(0.95f, d.settings.cylinder.size)
+        assertEquals(8f, d.settings.cylinder.triggerWidthDp)
+        // 古いバックアップには並べるものが無いので初期のショートカットが入る
+        assertEquals(6, d.cylinderItems.size)
+        val empty = BackupCodec.decode("""{"cylinderItems":[{},{"action":"FLASHLIGHT"}]}""")
+        assertEquals(listOf(CylinderItem(action = CylinderAction.FLASHLIGHT)), empty.cylinderItems)
+    }
 }

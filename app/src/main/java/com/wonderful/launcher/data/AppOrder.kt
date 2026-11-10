@@ -29,6 +29,14 @@ object AppOrder {
         return base + (key to ((base[key] ?: 0) + 1))
     }
 
+    /** アプリを起動したことを記録する（最近の履歴・起動回数・今日の起動回数） */
+    fun recordLaunch(d: LauncherData, key: String, now: Long, today: Long): LauncherData = d.copy(
+        recent = (listOf(RecentEntry(key, now)) + d.recent.filter { it.key != key }).take(50),
+        launchCounts = d.launchCounts + (key to ((d.launchCounts[key] ?: 0) + 1)),
+        dailyLaunches = bumpDaily(d.dailyLaunches, d.dailyLaunchDay, today, key),
+        dailyLaunchDay = today,
+    )
+
     /** 今日の起動回数（日付が変わっていたら空） */
     fun todayCounts(counts: Map<String, Int>, countedDay: Long, today: Long): Map<String, Int> =
         if (countedDay == today) counts else emptyMap()

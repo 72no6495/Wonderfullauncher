@@ -17,6 +17,10 @@
     <!-- 壁紙「カメラ」用（ユーザーが選んで許可した場合のみ。映像は保存も送信もしない） -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- シリンダーメニュー（ユーザーが ON にして「他のアプリに重ねて表示」を許可した場合のみ） -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <queries>
         <intent>
@@ -73,6 +77,16 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service" />
+        </service>
+
+        <!-- シリンダーメニュー：ほかのアプリの上に、右上の端のスワイプで出すメニュー -->
+        <service
+            android:name=".system.CylinderService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Edge-swipe launcher menu drawn over other apps" />
         </service>
 
         <!-- 通知バッジ用（ユーザーが許可した場合のみ動作） -->

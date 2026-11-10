@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -70,6 +71,15 @@ class LauncherStore(context: Context, scope: CoroutineScope) {
     }
 
     companion object {
+        @Volatile private var shared: LauncherStore? = null
+
+        /**
+         * アプリ全体で 1 つの保存先。ホーム画面とシリンダーメニュー（常駐サービス）が同じものを見る
+         */
+        fun get(context: Context): LauncherStore = shared ?: synchronized(this) {
+            shared ?: LauncherStore(context.applicationContext, CoroutineScope(SupervisorJob() + Dispatchers.Default)).also { shared = it }
+        }
+
         /** 新規インストール時の状態 */
         fun fresh() = LauncherData(dataVersion = Migration.CURRENT_VERSION)
 
